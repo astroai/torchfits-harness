@@ -8,10 +8,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+ENV_NAME="${TORCHFITS_BENCH_ENV:-}"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <suite> [extra bench_all args...]" >&2
-  pixi run -e "${TORCHFITS_BENCH_ENV:-bench-all}" python -c \
+  pixi run ${ENV_NAME:+-e "$ENV_NAME"} python -c \
     "from benchmarks.suites import list_suite_names; print('suites:', ', '.join(list_suite_names()))"
   exit 2
 fi
@@ -22,7 +23,6 @@ shift
 if [[ "${1:-}" == "--" ]]; then
   shift
 fi
-ENV_NAME="${TORCHFITS_BENCH_ENV:-bench-all}"
 RUN_ID="${TORCHFITS_BENCH_RUN_ID:-suite_${SUITE}_$(date -u +%Y%m%d_%H%M%S)}"
 
 # Disable SharedReadMeta stale-stat revalidation during one-shot benches —
@@ -30,7 +30,7 @@ RUN_ID="${TORCHFITS_BENCH_RUN_ID:-suite_${SUITE}_$(date -u +%Y%m%d_%H%M%S)}"
 export TORCHFITS_SHARED_META_VALIDATE="${TORCHFITS_SHARED_META_VALIDATE:-0}"
 
 echo "==> suite=${SUITE} run_id=${RUN_ID}"
-pixi run -e "$ENV_NAME" python benchmarks/bench_all.py \
+pixi run ${ENV_NAME:+-e "$ENV_NAME"} python benchmarks/bench_all.py \
   --suite "$SUITE" \
   --run-id "$RUN_ID" \
   "$@"

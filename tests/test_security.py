@@ -1,8 +1,5 @@
 import os
-from pathlib import Path
-import shlex
 import shutil
-import subprocess
 
 import numpy as np
 import pytest
@@ -179,33 +176,6 @@ def test_native_path_entry_points_reject_command_injection(
         entry(filename, *_PATH_FIRST_GUARD_ARGS[name])
 
     assert os.listdir(tmp_path) == [], f"{name} created a file for a rejected filename"
-
-
-def test_native_cfitsio_bracket_detector_probe_runs(tmp_path: Path):
-    """Compile and run the direct C++ detector regression in CI."""
-    compiler = shlex.split(os.environ.get("CXX", "c++"))
-    repo_root = Path(__file__).resolve().parents[1]
-    source = repo_root / "tests" / "cpp" / "test_bracket_detection.cpp"
-    executable = tmp_path / "test_bracket_detection"
-    subprocess.run(
-        [
-            *compiler,
-            "-std=c++17",
-            "-I",
-            str(repo_root / "src" / "torchfits" / "cpp_src"),
-            str(source),
-            "-o",
-            str(executable),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    result = subprocess.run(
-        [str(executable)], check=True, capture_output=True, text=True
-    )
-    assert "all checks passed" in result.stdout
-
 
 def test_forced_overwrite_prefix_allowed():
     """Leading '!' is valid CFITSIO overwrite syntax and must not bypass pipe checks."""

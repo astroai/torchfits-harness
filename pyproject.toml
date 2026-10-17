@@ -17,7 +17,7 @@ test = [
     "astropy>=6.1",
     "fitsio>=1.4",
     "numpy>=1.26",
-    "pyarrow>=17",
+    "pyarrow>=25.0.0,<26",
     "psutil>=5",
     "pandas>=2.2",
 ]
@@ -25,9 +25,9 @@ bench = [
     "astropy>=6.1",
     "fitsio>=1.4",
     "numpy>=1.26",
-    "pyarrow>=17",
+    "pyarrow>=25.0.0,<26",
     "pandas>=2.2",
-    "matplotlib>=3.8",
+    "matplotlib>=3.11",
     "psutil>=5",
 ]
 

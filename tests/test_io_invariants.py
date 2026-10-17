@@ -5,7 +5,6 @@ from __future__ import annotations
 import filecmp
 import gzip
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -677,99 +676,3 @@ def test_hdu_metadata_is_not_confused_by_a_moved_cursor(tmp_path: Path) -> None:
     for k, expected in enumerate(shapes, start=1):
         assert tuple(torchfits.read(path, hdu=k).shape) == expected
 
-
-def test_hdu_keyed_caches_position_the_cursor_themselves() -> None:
-    """Structural gate: the three HDU-keyed lookups must call ensure_hdu_checked.
-
-    These three cache on ``hdu_num`` but read the CFITSIO current-HDU cursor on a
-    miss. Positioning was left to the caller, which is a precondition nothing
-    states and nothing enforces — every one of the twelve call sites happened to
-    satisfy it, so the suite passed either way. That is precisely the kind of
-    invariant a test should not rely on being true by convention, so the calls
-    are pinned here.
-
-    Structural rather than behavioural: ``FITSFile`` symbols are hidden in the
-    extension, so a C++ probe cannot link against it the way the core-library
-    probes link ``libtorchfits_core``. The behavioural test above guards the
-    observable contract; this one guards the enforcement.
-    """
-    source = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "torchfits"
-        / "cpp_src"
-        / "fits_file.cpp"
-    ).read_text()
-
-    for method in (
-        "FITSFile::get_scale_info",
-        "FITSFile::is_compressed_image_cached",
-        "FITSFile::get_image_info",
-    ):
-        start = source.index(method)
-        body = source[start : source.index("\n}", start)]
-        assert "ensure_hdu_checked(" in body, (
-            f"{method} caches on hdu_num but reads the CFITSIO cursor on a miss; "
-            "it must position the cursor itself"
-        )
-
-
-def test_every_capsule_reader_binding_holds_the_reader_mutex() -> None:
-    """Any binding handed a TableReader capsule must hold its mutex.
-
-    ``TableReader::io_mutex_`` is declared in ``table_reader.h`` and acquired
-    nowhere in that header -- the bindings that hand out a *shared* reader take it
-    instead, because the only shared reader is the ``open_fits_mmap_reader``
-    capsule. That split is easy to misread: the header comment described the
-    serialization without saying where it happened, which is misleading enough
-    that reading the header alone suggests the mutex is dead code.
-
-    This gate makes the coupling explicit and keeps it true. A new binding that
-    accepts a capsule without locking would otherwise be a silent data race on
-    the CFITSIO cursor and on ``scratch_buffer_``, with the GIL released.
-    """
-    cpp_src = Path(__file__).resolve().parents[1] / "src" / "torchfits" / "cpp_src"
-    table_bindings = (cpp_src / "table_bindings.cpp").read_text()
-    table_reader = (cpp_src / "table_reader.h").read_text()
-
-    assert "mutable std::mutex io_mutex_;" in table_reader, (
-        "TableReader must keep a mutex for the shared-capsule path"
-    )
-
-    # Producer: open_fits_mmap_reader is the only thing that hands out a capsule.
-    producers = table_bindings.count("-> nb::capsule")
-    assert producers == 1, (
-        f"expected one capsule producer, found {producers}; a second sharing path "
-        "needs its own locking decision"
-    )
-
-    # Consumers: every lambda taking an nb::capsule parameter must lock. Matched
-    # by scanning for the parameter rather than by counting, so a new consumer is
-    # covered without editing this test.
-    consumers = 0
-    # A C++ lambda is [capture](params) -> ret: the capsule is a *parameter*, so
-    # it appears inside the parentheses, not the brackets.
-    pattern = r"\[\s*[^\]]*\]\s*\(([^)]*nb::capsule[^)]*)\)\s*->"
-    for match in re.finditer(pattern, table_bindings):
-        consumers += 1
-        body_start = table_bindings.index("{", match.end())
-        # The lambda body: brace-match from its opening brace.
-        depth, idx = 0, body_start
-        while idx < len(table_bindings):
-            if table_bindings[idx] == "{":
-                depth += 1
-            elif table_bindings[idx] == "}":
-                depth -= 1
-                if depth == 0:
-                    break
-            idx += 1
-        body = table_bindings[body_start : idx + 1]
-        assert "io_mutex_" in body, (
-            "a binding that accepts a TableReader capsule must hold io_mutex_ for "
-            "the whole call (GIL released), or the CFITSIO cursor and "
-            "scratch_buffer_ are raced"
-        )
-        assert "gil_scoped_release" in body, (
-            "the lock is only useful if the GIL is released around the read"
-        )
-    assert consumers >= 1, "no capsule consumers found -- has the binding moved?"

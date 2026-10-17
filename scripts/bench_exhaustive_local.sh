@@ -12,7 +12,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   DEFAULT_TAG="mps"
 fi
 RUN_ID="${1:-exhaustive_${DEFAULT_TAG}_$(date -u +%Y%m%d_%H%M%S)}"
-ENV_NAME="${TORCHFITS_BENCH_ENV:-bench-all}"
+ENV_NAME="${TORCHFITS_BENCH_ENV:-}"
 LOG_DIR="${ROOT}/benchmarks_results"
 LOG_FILE="${LOG_DIR}/${RUN_ID}.log"
 mkdir -p "$LOG_DIR"
@@ -21,7 +21,7 @@ echo "=== torchfits local exhaustive (CPU + MPS): ${RUN_ID} ===" | tee "$LOG_FIL
 echo "Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$LOG_FILE"
 
 set +e
-pixi run -e "$ENV_NAME" python benchmarks/bench_all.py \
+pixi run ${ENV_NAME:+-e "$ENV_NAME"} python benchmarks/bench_all.py \
   --suite release \
   --mmap-matrix \
   --profile lab \

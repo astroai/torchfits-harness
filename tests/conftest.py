@@ -10,8 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-# Imported AFTER the sys.path injection so this works when torchfits is editable-installed
-# (src/ on sys.path) as well as when it is also vap-installed (site-packages already has it).
+# The harness package lives in src/. Torchfits is the installed wheel, not this tree.
 from torchfits.cache import CACHE_ENV_SENTINELS  # noqa: E402
 
 

@@ -12,7 +12,7 @@ cd "$ROOT"
 
 CLUSTER="${1:-all}"
 RUN_ID="${TORCHFITS_BENCH_RUN_ID:-deficit_focus_$(date -u +%Y%m%d_%H%M%S)}"
-ENV_NAME="${TORCHFITS_BENCH_ENV:-bench-all}"
+ENV_NAME="${TORCHFITS_BENCH_ENV:-}"
 
 resolve_name() {
   case "$1" in
@@ -28,7 +28,7 @@ run_suite() {
   local name="$1"
   local rid="${RUN_ID}_${name}"
   echo "==> deficit-focus suite=${name} run_id=${rid}"
-  pixi run -e "$ENV_NAME" python benchmarks/bench_all.py \
+  pixi run ${ENV_NAME:+-e "$ENV_NAME"} python benchmarks/bench_all.py \
     --suite "$name" \
     --run-id "$rid"
 }
@@ -36,7 +36,7 @@ run_suite() {
 NAME="$(resolve_name "$CLUSTER")"
 if [[ "$NAME" == "all" ]]; then
   SUITES="$(
-    pixi run -e "$ENV_NAME" python -c \
+    pixi run ${ENV_NAME:+-e "$ENV_NAME"} python -c \
       "from benchmarks.suites import DEFICIT_FOCUS_SUITES; print(' '.join(DEFICIT_FOCUS_SUITES))"
   )"
   for s in $SUITES; do

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import itertools
-from pathlib import Path
 from unittest import mock
 
 import numpy as np
@@ -11,9 +10,6 @@ import pytest
 import torch
 
 import torchfits
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-
 
 # LONGSTRN / CONTINUE header values
 
@@ -250,13 +246,3 @@ def test_scan_reuses_one_mmap_reader_across_batches(tmp_path):
 
 # NIOBUF/MINDIRECT tuning guards
 
-
-def test_vendored_cfitsio_has_niobuf_mindirect_guards():
-    """The vendored CFITSIO headers must carry the #ifndef guards that let
-    -DTORCHFITS_NIOBUF / -DTORCHFITS_MINDIRECT override the defaults."""
-    fitsio_h = _REPO_ROOT / "extern/cfitsio/fitsio.h"
-    fitsio2_h = _REPO_ROOT / "extern/cfitsio/fitsio2.h"
-    if not fitsio_h.exists():
-        pytest.skip("vendored CFITSIO not materialized")
-    assert "#ifndef NIOBUF" in fitsio_h.read_text()
-    assert "#ifndef MINDIRECT" in fitsio2_h.read_text()

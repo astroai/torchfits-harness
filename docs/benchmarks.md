@@ -1,5 +1,13 @@
 # Benchmarks
 
+> Run these from a torchfits-harness checkout. Install a torchfits wheel
+> (`pixi run subject <wheel>`), then `pixi run dev`. The comparison
+> environment is the default Pixi env: `pixi run bench-fits`,
+> `pixi run bench-all`, `pixi run bench-cpp`. Commands below that say
+> `pixi run -e bench-all` or `pixi run -e bench-gpu` are the historical
+> torchfits forms; drop the `-e` flag here. This repo does not compile
+> torchfits or vendor CFITSIO.
+
 > **Headline (1.2.0rc1, lab profile, mmap on and off;
 > git-mirrored `exhaustive_cpu_20261007_203905`,
 > `exhaustive_cuda_20261007_203924`, and

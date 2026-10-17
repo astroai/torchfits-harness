@@ -734,36 +734,6 @@ def test_table_write_still_accepts_1d_and_2d_columns():
     finally:
         os.unlink(handle.name)
 
-
-def test_contiguous_copy_helper_rejects_count_larger_than_the_array():
-    """Structural gate: the shared copy helper must bound ``nelements`` itself.
-
-    ``ensure_c_contiguous_ndarray`` is the memory-safety boundary for every image
-    and table write. It takes ``nelements`` — the count the caller will hand to
-    CFITSIO — which is *not* the array's size, and its contiguous fast path
-    returned the source pointer without ever consulting it, so an over-large count
-    meant CFITSIO read past the end of the buffer. Every current caller derives the
-    count from the array, so the guard is defence in depth rather than a live fix;
-    it is pinned structurally because the code it protects is a header-inline
-    function with no Python-reachable entry point to exercise it.
-    """
-    from pathlib import Path
-
-    header = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "torchfits"
-        / "cpp_src"
-        / "nb_ndarray_utils.h"
-    ).read_text()
-    body = header.split("inline void* ensure_c_contiguous_ndarray", 1)[1]
-    body = body.split("ndarray_is_c_contiguous(t))", 1)[0]
-    assert "t.size()" in body, (
-        "ensure_c_contiguous_ndarray must validate nelements against the array "
-        "size before returning the contiguous pointer"
-    )
-
-
 def test_rejected_mmap_update_leaves_every_column_untouched(tmp_path):
     """A rejected ``update_rows_mmap`` must not leave the file half-updated.
 

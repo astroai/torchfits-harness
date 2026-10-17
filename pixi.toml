@@ -1,19 +1,25 @@
 [workspace]
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
+# Same manager pin as torchfits so the two locks are solved with one Pixi.
+requires-pixi = "==0.82.0"
 
 [dependencies]
 python = "3.13.*"
 pytest = ">=9.0"
 numpy = ">=1.26"
-pyarrow = ">=17"
+# Match the torchfits wheel lane. conda-forge pins libabseil per pyarrow minor.
+pyarrow = ">=25.0.0,<26"
 astropy = ">=6.1"
 fitsio = ">=1.4"
-matplotlib = ">=3.8"
+matplotlib = ">=3.11"
 pandas = ">=2.2"
 psutil = ">=5"
 pytorch = ">=2.13,<2.14"
 pip = ">=24"
+
+[activation.env]
+PYTHONNOUSERSITE = "1"
 
 [tasks]
 dev = "pip install -e . --no-deps"
@@ -21,6 +27,17 @@ dev = "pip install -e . --no-deps"
 subject = "pip install --no-deps"
 test = "pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py -q"
 bench-cpp = "python benchmarks/bench_cpp_backend.py"
+# Local suites use this env. The subject is an installed torchfits wheel, not a
+# build of this repo. Set TORCHFITS_BENCH_ENV to select another Pixi env.
+bench-fits = "python benchmarks/bench_all.py --profile user --fits-only"
+bench-fitstable = "python benchmarks/bench_all.py --profile user --fitstable-only"
+bench-mps = "python benchmarks/bench_all.py --profile user --fits-only"
+bench-all = "python benchmarks/bench_all.py --profile user --scope all"
+bench-suite = "bash scripts/bench_suite.sh"
+bench-exhaustive-local = "bash scripts/bench_exhaustive_local.sh"
+bench-deficit-focus = "bash scripts/bench_deficit_focus.sh"
+bench-cfitsio-direct = "bash scripts/bench_cfitsio_direct.sh"
+bench-release-scorecard = "bash scripts/bench_release_scorecard.sh"
 
 [pypi-dependencies]
 torchfits-harness = { path = ".", editable = true }
