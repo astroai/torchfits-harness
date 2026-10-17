@@ -1,0 +1,26 @@
+[workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+
+[dependencies]
+python = "3.13.*"
+pytest = ">=9.0"
+numpy = ">=1.26"
+pyarrow = ">=17"
+astropy = ">=6.1"
+fitsio = ">=1.4"
+matplotlib = ">=3.8"
+pandas = ">=2.2"
+psutil = ">=5"
+pytorch = ">=2.13,<2.14"
+pip = ">=24"
+
+[tasks]
+dev = "pip install -e . --no-deps"
+# Install a torchfits wheel, then this package. Pass the wheel path after --.
+subject = "pip install --no-deps"
+test = "pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py -q"
+bench-cpp = "python benchmarks/bench_cpp_backend.py"
+
+[pypi-dependencies]
+torchfits-harness = { path = ".", editable = true }

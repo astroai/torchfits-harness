@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Subject smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install torchfits subject and comparators
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install "torchfits>=1.2.1" numpy astropy fitsio pytest pyarrow pandas psutil
+          pip install -e . --no-deps
+      - name: Import subject
+        run: python -c "import torchfits, torchfits_harness; print(torchfits_harness.subject())"
+      - name: Upstream parity smokes
+        run: pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py -q
+      - name: Benchmark smoke
+        run: python benchmarks/bench_cpp_backend.py

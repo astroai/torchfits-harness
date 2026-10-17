@@ -1,0 +1,5 @@
+{
+  "verify_fast": ["pixi run test"],
+  "verify": ["pixi run test"],
+  "verify_full": ["pixi run test", "pixi run bench-cpp"]
+}

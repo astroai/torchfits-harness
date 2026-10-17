@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pixi/
+.pytest_cache/
+.ruff_cache/
+benchmarks_results/
+benchmarks_data/
+dist/
+*.egg-info/
+.venv/
