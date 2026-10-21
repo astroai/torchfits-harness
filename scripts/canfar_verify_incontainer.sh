@@ -22,9 +22,10 @@ SCRATCH="${TMP_SCRATCH_DIR:-/scratch}"
 RUN_DIR="${SCRATCH}/torchfits-harness/${TORCHFITS_HARNESS_RUN_ID}"
 mkdir -p "$RUN_DIR"
 
-# notebook/base images ship pixi pointed at a read-only prefix; keep it on scratch.
-export PIXI_HOME="${PIXI_HOME:-${SCRATCH}/torchfits-pixi-home}"
-export PIXI_CACHE_DIR="${PIXI_CACHE_DIR:-${SCRATCH}/torchfits-pixi-cache}"
+# notebook/base images ship PIXI_HOME=/usr/local/share/pixi, which the job user
+# cannot write, so only an explicit TORCHFITS_PIXI_HOME may override scratch.
+export PIXI_HOME="${TORCHFITS_PIXI_HOME:-${SCRATCH}/torchfits-pixi-home}"
+export PIXI_CACHE_DIR="${TORCHFITS_PIXI_CACHE:-${SCRATCH}/torchfits-pixi-cache}"
 mkdir -p "$PIXI_HOME" "$PIXI_CACHE_DIR"
 
 # Keep user-site off the shared /arc home; stale ~/.local packages break
@@ -44,7 +45,10 @@ NPROC="$(nproc 2>/dev/null || echo 4)"
 echo "=== torchfits-harness headless verify ==="
 echo "run_id=${TORCHFITS_HARNESS_RUN_ID} run_dir=${RUN_DIR}"
 echo "git=$(git rev-parse HEAD 2>/dev/null || echo unknown) nproc=${NPROC}"
+echo "PIXI_HOME=${PIXI_HOME} PIXI_CACHE_DIR=${PIXI_CACHE_DIR}"
 python3 --version
+command -v pixi >/dev/null || { echo "FAIL: pixi not on PATH in this image"; exit 1; }
+pixi --version
 
 pixi install
 
