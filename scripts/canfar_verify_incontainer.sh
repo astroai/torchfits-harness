@@ -98,14 +98,18 @@ echo "=== suite: pytest tests/ ==="
 pixi run python -m pytest tests/ ${TORCHFITS_HARNESS_PYTEST_ARGS:--q -m "not performance"} \
   --junitxml="${RUN_DIR}/junit.xml" || rc_suite=$?
 
+echo "=== bounded bench: pixi run bench-cpp ==="
+rc_bench=0
+pixi run bench-cpp || rc_bench=$?
+
 echo "=== summary ==="
-echo "gate_rc=${rc_gate} suite_rc=${rc_suite} run_dir=${RUN_DIR}"
-if [[ "${rc_gate}" -eq 0 && "${rc_suite}" -eq 0 ]]; then
+echo "gate_rc=${rc_gate} suite_rc=${rc_suite} bench_rc=${rc_bench} run_dir=${RUN_DIR}"
+if [[ "${rc_gate}" -eq 0 && "${rc_suite}" -eq 0 && "${rc_bench}" -eq 0 ]]; then
   echo "RESULT: PASS"
 else
   echo "RESULT: FAIL"
 fi
 # One failing stage must not hide the other's result.
-if [[ "${rc_gate}" -ne 0 || "${rc_suite}" -ne 0 ]]; then
+if [[ "${rc_gate}" -ne 0 || "${rc_suite}" -ne 0 || "${rc_bench}" -ne 0 ]]; then
   exit 1
 fi
