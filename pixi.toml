@@ -38,6 +38,8 @@ bench-exhaustive-local = "bash scripts/bench_exhaustive_local.sh"
 bench-deficit-focus = "bash scripts/bench_deficit_focus.sh"
 bench-cfitsio-direct = "bash scripts/bench_cfitsio_direct.sh"
 bench-release-scorecard = "bash scripts/bench_release_scorecard.sh"
+bench-median-stack = "python benchmarks/bench_median_stack.py"
+bench-metadata = "python benchmarks/bench_metadata.py"
 
 [pypi-dependencies]
 torchfits-harness = { path = ".", editable = true }
