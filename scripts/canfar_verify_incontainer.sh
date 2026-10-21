@@ -82,6 +82,14 @@ command -v pixi >/dev/null || { echo "FAIL: pixi not on PATH in this image"; exi
 use_pinned_pixi
 
 pixi install
+pixi run dev
+
+# From here on, drive the environment's interpreter directly. Every `pixi run`
+# re-syncs the environment from pixi.lock, and the lock carries its own
+# torchfits: invoking pixi again after installing the subject silently put the
+# locked wheel back, so a job that pinned 1.2.2 verified 1.2.1.
+ENV_PY="$(pixi run python -c 'import sys; print(sys.executable)' | tail -1)"
+echo "env python: ${ENV_PY}"
 
 # The subject: a released wheel, never this checkout. TORCHFITS_WHEEL takes any
 # pip spec or path; TORCHFITS_VERSION pins an exact release by number, because
@@ -94,16 +102,12 @@ else
   WHEEL_SPEC="torchfits>=1.2.1"
 fi
 echo "subject spec: ${WHEEL_SPEC}"
-# Install the subject LAST. `pixi run` re-syncs the environment from pixi.lock
-# whenever it thinks the env drifted, and the lock carries its own torchfits, so
-# a wheel installed before the sync gets silently replaced by the locked one.
-pixi run dev
-pixi run python -m pip install --no-cache-dir --no-deps "${WHEEL_SPEC}"
-pixi run python -c "import torchfits_harness; print('subject:', torchfits_harness.subject())"
-pixi run python -m pip show torchfits 2>/dev/null | sed -n '1,2p'
+"$ENV_PY" -m pip install --no-cache-dir --no-deps "${WHEEL_SPEC}"
+"$ENV_PY" -c "import torchfits_harness; print('subject:', torchfits_harness.subject())"
+"$ENV_PY" -m pip show torchfits 2>/dev/null | sed -n '1,2p'
 
 if [[ -n "${TORCHFITS_VERSION:-}" ]]; then
-  installed_version="$(pixi run python -c 'import torchfits; print(torchfits.__version__)' | tail -1)"
+  installed_version="$("$ENV_PY" -c 'import torchfits; print(torchfits.__version__)' | tail -1)"
   if [[ "${installed_version}" != "${TORCHFITS_VERSION}" ]]; then
     echo "FAIL: subject is torchfits ${installed_version}, expected ${TORCHFITS_VERSION}"
     exit 1
@@ -114,17 +118,20 @@ fi
 rc_gate=0
 rc_suite=0
 
-echo "=== gate: pixi run test ==="
-pixi run test || rc_gate=$?
+echo "=== gate: upstream parity smokes ==="
+# Same three files as the `test` task in pixi.toml; run directly so the subject
+# installed above survives.
+"$ENV_PY" -m pytest tests/test_fitsio_upstream_smoke.py \
+  tests/test_astropy_upstream_smoke.py tests/test_layout.py -q || rc_gate=$?
 
 echo "=== suite: pytest tests/ ==="
 # shellcheck disable=SC2086
-pixi run python -m pytest tests/ ${TORCHFITS_HARNESS_PYTEST_ARGS:--q -m "not performance"} \
+"$ENV_PY" -m pytest tests/ ${TORCHFITS_HARNESS_PYTEST_ARGS:--q -m "not performance"} \
   --junitxml="${RUN_DIR}/junit.xml" || rc_suite=$?
 
-echo "=== bounded bench: pixi run bench-cpp ==="
+echo "=== bounded bench: bench_cpp_backend.py ==="
 rc_bench=0
-pixi run bench-cpp || rc_bench=$?
+"$ENV_PY" benchmarks/bench_cpp_backend.py || rc_bench=$?
 
 echo "=== summary ==="
 echo "gate_rc=${rc_gate} suite_rc=${rc_suite} bench_rc=${rc_bench} run_dir=${RUN_DIR}"
