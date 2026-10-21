@@ -94,9 +94,22 @@ else
   WHEEL_SPEC="torchfits>=1.2.1"
 fi
 echo "subject spec: ${WHEEL_SPEC}"
-pixi run python -m pip install --no-cache-dir --no-deps "${WHEEL_SPEC}"
+# Install the subject LAST. `pixi run` re-syncs the environment from pixi.lock
+# whenever it thinks the env drifted, and the lock carries its own torchfits, so
+# a wheel installed before the sync gets silently replaced by the locked one.
 pixi run dev
+pixi run python -m pip install --no-cache-dir --no-deps "${WHEEL_SPEC}"
 pixi run python -c "import torchfits_harness; print('subject:', torchfits_harness.subject())"
+pixi run python -m pip show torchfits 2>/dev/null | sed -n '1,2p'
+
+if [[ -n "${TORCHFITS_VERSION:-}" ]]; then
+  installed_version="$(pixi run python -c 'import torchfits; print(torchfits.__version__)' | tail -1)"
+  if [[ "${installed_version}" != "${TORCHFITS_VERSION}" ]]; then
+    echo "FAIL: subject is torchfits ${installed_version}, expected ${TORCHFITS_VERSION}"
+    exit 1
+  fi
+  echo "subject pin confirmed: ${installed_version}"
+fi
 
 rc_gate=0
 rc_suite=0
