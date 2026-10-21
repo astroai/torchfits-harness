@@ -13,7 +13,10 @@
 # Env:
 #   TORCHFITS_HARNESS_RUN_ID   run id (default: verify_<UTC timestamp>)
 #   TORCHFITS_WHEEL            pip spec or path for the subject
-#                              (default: torchfits>=1.2.1 from PyPI)
+#   TORCHFITS_VERSION          exact release to install (wins over the default
+#                              floor; use this from `canfar --env`, which
+#                              drops values containing `>` or `==`)
+
 #   TORCHFITS_HARNESS_PYTEST_ARGS  extra pytest args (default: -q -m "not performance")
 set -euo pipefail
 
@@ -80,8 +83,16 @@ use_pinned_pixi
 
 pixi install
 
-# The subject: a released wheel, never this checkout.
-WHEEL_SPEC="${TORCHFITS_WHEEL:-torchfits>=1.2.1}"
+# The subject: a released wheel, never this checkout. TORCHFITS_WHEEL takes any
+# pip spec or path; TORCHFITS_VERSION pins an exact release by number, because
+# Skaha drops env values that carry `>` or `==`.
+if [[ -n "${TORCHFITS_WHEEL:-}" ]]; then
+  WHEEL_SPEC="${TORCHFITS_WHEEL}"
+elif [[ -n "${TORCHFITS_VERSION:-}" ]]; then
+  WHEEL_SPEC="torchfits==${TORCHFITS_VERSION}"
+else
+  WHEEL_SPEC="torchfits>=1.2.1"
+fi
 echo "subject spec: ${WHEEL_SPEC}"
 pixi run python -m pip install --no-cache-dir --no-deps "${WHEEL_SPEC}"
 pixi run dev
