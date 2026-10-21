@@ -69,8 +69,10 @@ use_pinned_pixi() {
   pixi --version
 }
 
-# stderr -> stdout only (process substitution on stderr loses the exit code).
-exec > >(tee -a "${RUN_DIR}/stdout.log") 2>&1
+# No process substitution: the platform already captures stdout, and a `tee`
+# child is killed as the session tears down, which swallowed the last lines of
+# the run - including the verdict. Stage results are also written to
+# ${RUN_DIR}/summary.txt for anyone reading the scratch tree before it ends.
 
 NPROC="$(nproc 2>/dev/null || echo 4)"
 echo "=== torchfits-harness headless verify ==="
@@ -133,13 +135,16 @@ echo "=== bounded bench: bench_cpp_backend.py ==="
 rc_bench=0
 "$ENV_PY" benchmarks/bench_cpp_backend.py || rc_bench=$?
 
-echo "=== summary ==="
-echo "gate_rc=${rc_gate} suite_rc=${rc_suite} bench_rc=${rc_bench} run_dir=${RUN_DIR}"
-if [[ "${rc_gate}" -eq 0 && "${rc_suite}" -eq 0 && "${rc_bench}" -eq 0 ]]; then
-  echo "RESULT: PASS"
-else
-  echo "RESULT: FAIL"
+verdict=PASS
+if [[ "${rc_gate}" -ne 0 || "${rc_suite}" -ne 0 || "${rc_bench}" -ne 0 ]]; then
+  verdict=FAIL
 fi
+summary="gate_rc=${rc_gate} suite_rc=${rc_suite} bench_rc=${rc_bench} run_dir=${RUN_DIR}"
+echo "=== summary ==="
+echo "${summary}"
+echo "RESULT: ${verdict}"
+echo "${summary}" > "${RUN_DIR}/summary.txt"
+echo "RESULT: ${verdict}" >> "${RUN_DIR}/summary.txt"
 # One failing stage must not hide the other's result.
 if [[ "${rc_gate}" -ne 0 || "${rc_suite}" -ne 0 || "${rc_bench}" -ne 0 ]]; then
   exit 1
