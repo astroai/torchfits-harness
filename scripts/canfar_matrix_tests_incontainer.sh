@@ -78,8 +78,9 @@ else
   INDEX="https://download.pytorch.org/whl/cpu"
 fi
 echo "--- installing ${TORCH_SPEC} from ${INDEX}"
-pip install -q --upgrade pip
-pip install -q "${TORCH_SPEC}" --index-url "${INDEX}"
+# uv owns the venv and has no `pip` shim in it; the image's global pip
+# would try to write /usr/local/bin/pip and fail.
+uv pip install -q "${TORCH_SPEC}" --index-url "${INDEX}"
 python - <<'PY'
 import torch
 print("torch", torch.__version__, "cuda_available", torch.cuda.is_available(),
@@ -91,8 +92,8 @@ if [[ "${DEVICE}" == "cuda" ]] && ! python -c 'import torch,sys; sys.exit(0 if t
 fi
 
 echo "--- building torchfits from the checkout (C++20, vendored CFITSIO)"
-pip install -q scikit-build-core nanobind cmake ninja numpy pyarrow pytest
-pip install -q --no-build-isolation -e "${TORCHFITS_DIR}" --no-deps
+uv pip install -q scikit-build-core nanobind cmake ninja numpy pyarrow pytest
+uv pip install -q --no-build-isolation -e "${TORCHFITS_DIR}" --no-deps
 python -c "import torchfits, torch; print('torchfits', torchfits.__version__, 'torch', torch.__version__)"
 
 STATUS=0
@@ -125,7 +126,7 @@ fi
 
 if [[ "${SUITE}" == "harness" || "${SUITE}" == "both" ]]; then
   echo "--- pytest: harness tests/"
-  pip install -q fitsio astropy polars psutil
+  uv pip install -q fitsio astropy polars psutil
   if ! python -m pytest "${REPO_ROOT}/tests" -q -m "not performance" \
       -p no:cacheprovider > "${WORK}/pytest-harness.log" 2>&1; then
     STATUS=1
