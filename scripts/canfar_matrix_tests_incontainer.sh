@@ -129,7 +129,10 @@ python -c "import torchfits, torch; print('torchfits', torchfits.__version__, 't
 STATUS=0
 if [[ "${SUITE}" == "torchfits" || "${SUITE}" == "both" ]]; then
   echo "--- pytest: torchfits tests/"
-  if ! python -m pytest "${TORCHFITS_DIR}/tests" -q -m "not performance" \
+  # Run from the harness checkout on purpose: a test that only passes from the
+  # repository root is a bug, and this is the cheapest place to find it (-rs
+  # records why anything was skipped).
+  if ! python -m pytest "${TORCHFITS_DIR}/tests" -q -rs -m "not performance" \
       --ignore="${TORCHFITS_DIR}/tests/test_examples_runner.py" \
       -p no:cacheprovider > "${WORK}/pytest-torchfits.log" 2>&1; then
     STATUS=1
@@ -157,7 +160,7 @@ fi
 if [[ "${SUITE}" == "harness" || "${SUITE}" == "both" ]]; then
   echo "--- pytest: harness tests/"
   uv pip install -q fitsio astropy polars psutil
-  if ! python -m pytest "${REPO_ROOT}/tests" -q -m "not performance" \
+  if ! python -m pytest "${REPO_ROOT}/tests" -q -rs -m "not performance" \
       -p no:cacheprovider > "${WORK}/pytest-harness.log" 2>&1; then
     STATUS=1
     tail -40 "${WORK}/pytest-harness.log"
