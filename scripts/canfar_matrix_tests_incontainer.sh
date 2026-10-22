@@ -144,13 +144,26 @@ else
   mkdir -p "${WORK}/deps/src"
   curl -fsSL "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz" \
     | tar -xz -C "${WORK}/deps/src"
-  ( cd "${WORK}/deps/src/bzip2-1.0.8" && make -j"$(nproc)" >/dev/null \
+  # -fPIC is not optional: CMake links the archive it finds in $PREFIX into
+  # libtorchfits_core.so, and a non-PIC libbz2.a fails that link on Linux
+  # (relocation R_X86_64_32 against ... can not be used when making a shared
+  # object). bzip2's own Makefile does not pass it.
+  ( cd "${WORK}/deps/src/bzip2-1.0.8" \
+      && make -j"$(nproc)" CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64" >/dev/null \
       && make install PREFIX="${BZIP2_PREFIX}" >/dev/null )
 fi
 
 echo "--- building torchfits from the checkout (C++20, vendored CFITSIO)"
 uv pip install -q scikit-build-core nanobind cmake ninja numpy pyarrow pytest
-PREFIX="${BZIP2_PREFIX}" uv pip install -q --no-build-isolation -e "${TORCHFITS_DIR}" --no-deps
+# The CLI shows only the last lines of a session, which for a configure or link
+# failure is the least useful part, so keep the build log where the leg's work
+# dir survives.
+if ! PREFIX="${BZIP2_PREFIX}" uv pip install --no-build-isolation -e "${TORCHFITS_DIR}" \
+    --no-deps > "${WORK}/build.log" 2>&1; then
+  tail -40 "${WORK}/build.log"
+  echo "[FAIL] ${TAG}: torchfits build (full log ${WORK}/build.log)"
+  exit 1
+fi
 python -c "import torchfits, torch; print('torchfits', torchfits.__version__, 'torch', torch.__version__)"
 
 STATUS=0
