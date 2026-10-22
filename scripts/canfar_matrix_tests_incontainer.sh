@@ -13,6 +13,7 @@
 #   TORCHFITS_MT_TORCH     torch version to install                [2.14.1]
 #   TORCHFITS_MT_SUITE     torchfits | harness | both              [torchfits]
 #   TORCHFITS_MT_EXAMPLES  1 to run the bounded example gallery    [0]
+#   TORCHFITS_MT_REAL_DATA 1 to fetch the ~2.5 GB CFHT sample      [0]
 #
 # Prints one "[ OK ]" line per leg, or "[FAIL] ..." plus the tail of the pytest
 # log; the launcher greps for them. Everything durable lands under $SCRATCH.
@@ -24,6 +25,7 @@ CU="${TORCHFITS_MT_CU:-cu130}"
 TORCH_VERSION="${TORCHFITS_MT_TORCH:-2.14.1}"
 SUITE="${TORCHFITS_MT_SUITE:-torchfits}"
 EXAMPLES="${TORCHFITS_MT_EXAMPLES:-0}"
+REAL_DATA="${TORCHFITS_MT_REAL_DATA:-0}"
 
 SCRATCH="${TMP_SCRATCH_DIR:-/scratch}"
 if [[ "${DEVICE}" == "cuda" ]]; then
@@ -127,6 +129,25 @@ uv pip install -q --no-build-isolation -e "${TORCHFITS_DIR}" --no-deps
 python -c "import torchfits, torch; print('torchfits', torchfits.__version__, 'torch', torch.__version__)"
 
 STATUS=0
+# Real CFHT frames are the only input whose expected values were not written by
+# us, and the tests that use them skip without the samples. Keep the data on
+# $SCRATCH (the clone lives in /tmp) and point the checkout at it, so the
+# resolution inside the tests stays untouched.
+if [[ "${REAL_DATA}" == "1" ]]; then
+  DATA_ROOT="${SCRATCH}/torchfits-matrix-data"
+  mkdir -p "${DATA_ROOT}"
+  ln -sfn "${DATA_ROOT}" "${TORCHFITS_DIR}/benchmarks_data"
+  echo "--- fetching the CFHT sample into ${DATA_ROOT}"
+  if ! bash "${TORCHFITS_DIR}/scripts/fetch_cfht_megacam_sample.sh" \
+      > "${WORK}/fetch-cfht.log" 2>&1; then
+    STATUS=1
+    tail -10 "${WORK}/fetch-cfht.log"
+    echo "[FAIL] ${TAG}: CFHT sample fetch"
+  else
+    echo "$(find "${DATA_ROOT}" -name '*.fits.fz' | wc -l) sample frames present"
+  fi
+fi
+
 if [[ "${SUITE}" == "torchfits" || "${SUITE}" == "both" ]]; then
   echo "--- pytest: torchfits tests/"
   # Run from the harness checkout on purpose: a test that only passes from the
