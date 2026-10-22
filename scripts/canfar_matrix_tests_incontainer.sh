@@ -123,9 +123,34 @@ fi
 # scikit-build-core forwards this to CMake, so FindZLIB resolves the prefix above.
 export CMAKE_ARGS="${CMAKE_ARGS:-} -DZLIB_ROOT=${ZLIB_PREFIX}"
 
+# Same story for bzip2: without headers the vendored CFITSIO builds with the
+# BZIP2_1 codec compiled out and six tests skip, so the leg would silently cover
+# less than the wheel does. CMake reads ENV{PREFIX} for the vendored path.
+find_bzip2_prefix() {
+  local prefix
+  for prefix in "${CONDA_PREFIX:-}" /usr/local /usr; do
+    [[ -n "${prefix}" && -f "${prefix}/include/bzlib.h" ]] || continue
+    [[ -e "${prefix}/lib/libbz2.a" || -e "${prefix}/lib64/libbz2.a" ]] \
+      && { printf '%s' "${prefix}"; return 0; }
+  done
+  return 1
+}
+printf '%s' "--- bzip2: "
+if BZIP2_PREFIX="$(find_bzip2_prefix)"; then
+  echo "image prefix ${BZIP2_PREFIX}"
+else
+  BZIP2_PREFIX="${WORK}/deps/bzip2"
+  echo "building 1.0.8 into ${BZIP2_PREFIX}"
+  mkdir -p "${WORK}/deps/src"
+  curl -fsSL "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz" \
+    | tar -xz -C "${WORK}/deps/src"
+  ( cd "${WORK}/deps/src/bzip2-1.0.8" && make -j"$(nproc)" >/dev/null \
+      && make install PREFIX="${BZIP2_PREFIX}" >/dev/null )
+fi
+
 echo "--- building torchfits from the checkout (C++20, vendored CFITSIO)"
 uv pip install -q scikit-build-core nanobind cmake ninja numpy pyarrow pytest
-uv pip install -q --no-build-isolation -e "${TORCHFITS_DIR}" --no-deps
+PREFIX="${BZIP2_PREFIX}" uv pip install -q --no-build-isolation -e "${TORCHFITS_DIR}" --no-deps
 python -c "import torchfits, torch; print('torchfits', torchfits.__version__, 'torch', torch.__version__)"
 
 STATUS=0
@@ -137,15 +162,18 @@ if [[ "${REAL_DATA}" == "1" ]]; then
   DATA_ROOT="${SCRATCH}/torchfits-matrix-data"
   mkdir -p "${DATA_ROOT}"
   ln -sfn "${DATA_ROOT}" "${TORCHFITS_DIR}/benchmarks_data"
-  echo "--- fetching the CFHT sample into ${DATA_ROOT}"
-  if ! bash "${TORCHFITS_DIR}/scripts/fetch_cfht_megacam_sample.sh" \
-      > "${WORK}/fetch-cfht.log" 2>&1; then
-    STATUS=1
-    tail -10 "${WORK}/fetch-cfht.log"
-    echo "[FAIL] ${TAG}: CFHT sample fetch"
-  else
-    echo "$(find "${DATA_ROOT}" -name '*.fits.fz' | wc -l) sample frames present"
-  fi
+  echo "--- fetching the CFHT samples into ${DATA_ROOT}"
+  # Both samples: the tests that need one half skip when it is missing, and a
+  # leg that never proves the mosaics is not the run the wheel is judged on.
+  for fetch in fetch_cfht_megacam_sample fetch_cfht_megapipe_sample; do
+    if ! bash "${TORCHFITS_DIR}/scripts/${fetch}.sh" \
+        > "${WORK}/${fetch}.log" 2>&1; then
+      STATUS=1
+      tail -10 "${WORK}/${fetch}.log"
+      echo "[FAIL] ${TAG}: ${fetch}"
+    fi
+  done
+  echo "$(find "${DATA_ROOT}" -name '*.fits*' | wc -l) sample files present"
 fi
 
 if [[ "${SUITE}" == "torchfits" || "${SUITE}" == "both" ]]; then
