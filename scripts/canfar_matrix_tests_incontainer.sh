@@ -32,7 +32,6 @@ else
   TAG="py${TORCHFITS_MT_PY//./}-cpu"
 fi
 WORK="${SCRATCH}/torchfits-matrix-tests/${TAG}"
-RUN_LOG="${WORK}/leg.log"
 mkdir -p "${WORK}" "${SCRATCH}/pip-cache" "${SCRATCH}/tmp" "${SCRATCH}/uv/bin"
 export PIP_CACHE_DIR="${SCRATCH}/pip-cache"
 export TMPDIR="${SCRATCH}/tmp"
@@ -70,11 +69,10 @@ uv venv --python "${TORCHFITS_MT_PY}" "${VENV}"
 source "${VENV}/bin/activate"
 python -V
 
+TORCH_SPEC="torch==${TORCH_VERSION}"
 if [[ "${DEVICE}" == "cuda" ]]; then
-  TORCH_SPEC="torch==${TORCH_VERSION}"
   INDEX="https://download.pytorch.org/whl/${CU}"
 else
-  TORCH_SPEC="torch==${TORCH_VERSION}"
   INDEX="https://download.pytorch.org/whl/cpu"
 fi
 echo "--- installing ${TORCH_SPEC} from ${INDEX}"
@@ -90,6 +88,38 @@ if [[ "${DEVICE}" == "cuda" ]] && ! python -c 'import torch,sys; sys.exit(0 if t
   echo "[FAIL] ${TAG}: torch.cuda.is_available() is false on a GPU leg"
   exit 1
 fi
+
+# The image carries the zlib runtime but no headers, and the build treats ZLIB
+# as required for compressed FITS. Reuse any usable zlib prefix; otherwise build
+# one under ${WORK} and point CMake at it, instead of skipping the feature.
+find_zlib_prefix() {
+  local prefix lib
+  for prefix in "${CONDA_PREFIX:-}" /usr/local /usr; do
+    [[ -n "${prefix}" && -f "${prefix}/include/zlib.h" ]] || continue
+    for lib in "${prefix}/lib/libz.so" "${prefix}/lib/libz.a" \
+               "${prefix}/lib64/libz.so" "${prefix}/lib64/libz.a"; do
+      [[ -e "${lib}" ]] && { printf '%s' "${prefix}"; return 0; }
+    done
+  done
+  return 1
+}
+printf '%s' "--- zlib: "
+if ZLIB_PREFIX="$(find_zlib_prefix)"; then
+  echo "image prefix ${ZLIB_PREFIX}"
+else
+  ZLIB_PREFIX="${WORK}/deps/zlib"
+  ZLIB_VERSION="1.3.1"
+  ZLIB_SRC="${WORK}/deps/src/zlib-${ZLIB_VERSION}"
+  echo "building ${ZLIB_VERSION} into ${ZLIB_PREFIX}"
+  mkdir -p "${WORK}/deps/src"
+  curl -fsSL "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" \
+    | tar -xz -C "${WORK}/deps/src"
+  ( cd "${ZLIB_SRC}" && ./configure --prefix="${ZLIB_PREFIX}" >/dev/null \
+      && make -j"$(nproc)" >/dev/null && make install >/dev/null )
+fi
+
+# scikit-build-core forwards this to CMake, so FindZLIB resolves the prefix above.
+export CMAKE_ARGS="${CMAKE_ARGS:-} -DZLIB_ROOT=${ZLIB_PREFIX}"
 
 echo "--- building torchfits from the checkout (C++20, vendored CFITSIO)"
 uv pip install -q scikit-build-core nanobind cmake ninja numpy pyarrow pytest
@@ -138,5 +168,5 @@ if [[ "${SUITE}" == "harness" || "${SUITE}" == "both" ]]; then
   fi
 fi
 
-echo "leg=${TAG} status=${STATUS} log=${RUN_LOG}"
+echo "leg=${TAG} status=${STATUS} logs=${WORK}"
 exit "${STATUS}"
