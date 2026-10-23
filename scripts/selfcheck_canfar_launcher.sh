@@ -9,7 +9,9 @@ export TORCHFITS_BENCH_RUN_ID=selfcheck
 export TORCHFITS_GIT_REF=main
 export TORCHFITS_BENCH_MODE=smoke
 
-REMOTE_PLAIN="git clone --depth 1 --branch main https://github.com/astroai/torchfits.git /scratch/torchfits; cd /scratch/torchfits; bash scripts/canfar_gpu_bench_incontainer.sh"
+REMOTE_PLAIN="git clone --depth 1 --branch main https://github.com/astroai/torchfits-harness.git /scratch/torchfits-harness; cd /scratch/torchfits-harness; bash scripts/canfar_gpu_bench_incontainer.sh"
+grep -q 'github.com/astroai/torchfits-harness.git' scripts/launch_canfar_gpu_bench.sh
+grep -q '/scratch/torchfits-harness' scripts/launch_canfar_gpu_bench.sh
 REMOTE_CMD="$(printf '%s' "${REMOTE_PLAIN}" | tr ' ' '\t')"
 
 case "${REMOTE_CMD}" in

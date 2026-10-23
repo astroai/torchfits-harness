@@ -46,8 +46,6 @@ if command -v nvidia-smi >/dev/null; then
   nvidia-smi -L || true
 fi
 
-bash extern/vendor.sh --cfitsio-version extern/VERSIONS.txt
-
 # Keep pip/user-site off the shared /arc home — concurrent sessions and
 # leftover ~/.local packages have corrupted setuptools uninstalls there.
 export PYTHONNOUSERSITE=1
@@ -57,17 +55,28 @@ mkdir -p "${PIP_CACHE_DIR}" "${TMPDIR}"
 
 pixi install
 
+# The subject is a torchfits wheel. This checkout does not vendor CFITSIO.
+if [[ "${TORCHFITS_BENCH_MODE}" != "exhaustive-cpu" ]]; then
+  pixi run python -m pip install --no-cache-dir --force-reinstall \
+    "torch>=2.13,<2.14" \
+    --index-url "https://download.pytorch.org/whl/${TORCHFITS_BENCH_CU_FLAVOR:-cu129}"
+fi
+if [[ -n "${TORCHFITS_WHEEL:-}" ]]; then
+  pixi run python -m pip install --no-cache-dir --force-reinstall --no-deps "${TORCHFITS_WHEEL}"
+else
+  pixi run python -m pip install --no-cache-dir --no-deps "torchfits>=1.2.1"
+fi
+pixi run dev
+pixi run python -c "import torch, torchfits; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'torchfits', torchfits.__version__)"
+
 case "${TORCHFITS_BENCH_MODE}" in
   exhaustive-cpu)
-    # CPU scorecard: no CUDA torch swap, no gpu-env-check.
-    pixi run -e bench-all bench-install
-    pixi run -e bench-all python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
     export TORCH_NUM_THREADS="${TORCH_NUM_THREADS:-8}"
     export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
     export MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
     export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-8}"
     echo "exhaustive-cpu threads: TORCH=${TORCH_NUM_THREADS}"
-    pixi run -e bench-all python benchmarks/bench_all.py \
+    pixi run python benchmarks/bench_all.py \
       --profile lab \
       --suite release \
       --mmap-matrix \
@@ -75,36 +84,27 @@ case "${TORCHFITS_BENCH_MODE}" in
       --run-id "${TORCHFITS_BENCH_RUN_ID}" \
       --keep-temp
     ;;
+  smoke)
+    mkdir -p benchmarks_results
+    pixi run python -m pytest tests/test_scale_on_device.py -q
+    pixi run python benchmarks/bench_gpu_transports.py \
+      --run-id "${TORCHFITS_BENCH_RUN_ID}" \
+      --output "benchmarks_results/${TORCHFITS_BENCH_RUN_ID}/gpu_transports.csv"
+    ;;
+  release-gate)
+    pixi run test
+    ;;
+  exhaustive)
+    pixi run python benchmarks/bench_all.py \
+      --profile lab \
+      --suite release \
+      --mmap-matrix \
+      --run-id "${TORCHFITS_BENCH_RUN_ID}" \
+      --keep-temp
+    ;;
   *)
-    pixi run -e bench-gpu gpu-bootstrap
-    pixi run -e bench-gpu bench-gpu-install
-    pixi run -e bench-gpu gpu-env-check
-    pixi run -e bench-gpu python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.version.cuda)"
-
-    case "${TORCHFITS_BENCH_MODE}" in
-      smoke)
-        mkdir -p benchmarks_results
-        pixi run -e bench-gpu pytest tests/test_scale_on_device.py -q
-        pixi run -e bench-gpu python benchmarks/bench_gpu_transports.py \
-          --run-id "${TORCHFITS_BENCH_RUN_ID}" \
-          --output "benchmarks_results/${TORCHFITS_BENCH_RUN_ID}/gpu_transports.csv"
-        ;;
-      release-gate)
-        pixi run -e bench-gpu release-gate
-        ;;
-      exhaustive)
-        pixi run -e bench-gpu python benchmarks/bench_all.py \
-          --profile lab \
-          --suite release \
-          --mmap-matrix \
-          --run-id "${TORCHFITS_BENCH_RUN_ID}" \
-          --keep-temp
-        ;;
-      *)
-        echo "unknown TORCHFITS_BENCH_MODE=${TORCHFITS_BENCH_MODE}" >&2
-        exit 1
-        ;;
-    esac
+    echo "unknown TORCHFITS_BENCH_MODE=${TORCHFITS_BENCH_MODE}" >&2
+    exit 1
     ;;
 esac
 
