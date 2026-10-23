@@ -24,7 +24,14 @@ jobs:
           pip install -e . --no-deps
       - name: Import subject
         run: python -c "import torchfits, torchfits_harness; print(torchfits_harness.subject())"
+      - name: Install fitsverify (conda-forge)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: fitsverify
+          create-args: >-
+            -c conda-forge
+            fitsverify
       - name: Upstream parity smokes
-        run: pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py -q
+        run: pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q
       - name: Benchmark smoke
         run: python benchmarks/bench_cpp_backend.py

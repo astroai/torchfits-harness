@@ -12,6 +12,7 @@ numpy = ">=1.26"
 pyarrow = ">=25.0.0,<26"
 astropy = ">=6.1"
 fitsio = ">=1.4"
+fitsverify = ">=4.22"  # harness-only: cross-check `torchfits verify`
 matplotlib = ">=3.11"
 pandas = ">=2.2"
 psutil = ">=5"
@@ -25,7 +26,7 @@ PYTHONNOUSERSITE = "1"
 dev = "pip install -e . --no-deps"
 # Install a torchfits wheel, then this package. Pass the wheel path after --.
 subject = "pip install --no-deps"
-test = "pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py -q"
+test = "pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q"
 bench-cpp = "python benchmarks/bench_cpp_backend.py"
 # Local suites use this env. The subject is an installed torchfits wheel, not a
 # build of this repo. Set TORCHFITS_BENCH_ENV to select another Pixi env.

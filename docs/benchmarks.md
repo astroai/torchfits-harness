@@ -82,7 +82,7 @@ Fairness controls:
 True **disk→GPU** (GPUDirect Storage / cuFile, or a CFITSIO path that never
 touches host RAM) is **not** implemented. Every Python FITS stack here
 decodes on the host, then copies with `.to(device)`. Exploring a direct path
-is a **2.0** item (see [Roadmap](roadmap.md)) — not a 1.x claim.
+is a **2.0** item (see the [torchfits roadmap](https://github.com/astroai/torchfits/blob/main/docs/roadmap.md)) — not a 1.x claim.
 
 ### Tables on GPU transports
 
@@ -211,8 +211,8 @@ GPU when present). Host recipes:
 | Task | Host | Run ID prefix |
 |---|---|---|
 | `pixi run bench-exhaustive-local` | Mac CPU + MPS | `exhaustive_mps_*` |
-| `pixi run bench-exhaustive-canfar-cpu` | CANFAR multicore CPU | `exhaustive_cpu_*` |
-| `pixi run bench-exhaustive-canfar-cuda` | CANFAR CUDA | `exhaustive_cuda_*` |
+| `TORCHFITS_BENCH_MODE=exhaustive-cpu bash scripts/launch_canfar_gpu_bench.sh` | CANFAR multicore CPU | `exhaustive_cpu_*` |
+| `bash scripts/launch_canfar_gpu_bench.sh` | CANFAR CUDA | `exhaustive_cuda_*` |
 | `pixi run bench-release-scorecard -- <run_dir>...` | meta | patches multi-host docs |
 | `pixi run bench-cfitsio-direct` | local C | full-suite pure vendored CFITSIO (`--profile full`) |
 | `pixi run bench-megacam` | local | CFHT MegaCam MEF cutouts (requires fetched sample data) |
@@ -232,8 +232,9 @@ Public CFHT MegaCam MEF samples (CADC Direct Data Service) exercise **Rice
 Uses `ZNAXIS*` for tile-compressed sizes; throughput is cutout **payload** MB/s.
 
 ```bash
-bash scripts/fetch_cfht_megacam_sample.sh   # once; idempotent
-pixi run bench-megacam
+# The sample is fetched by torchfits (scripts/fetch_cfht_megacam_sample.sh)
+# into that repo's benchmarks_data/cfht_megacam/. Point this bench at it:
+pixi run bench-megacam -- --data-dir /path/to/torchfits/benchmarks_data/cfht_megacam
 ```
 
 Outputs land in `benchmarks_results/<run-id>/megacam_results.csv`.
@@ -243,7 +244,7 @@ On multi-extension CFHT MegaCam exposures (40 cutouts $\times 256 \times 256$ pe
 For **uncompressed** survey mosaics (e.g. CFHTLS MegaPipe float32 stacks),
 `open_subset_reader` maps the data segment once and slices cutouts with
 endian swap into torch tensors — see
-[ML with FITS](examples-ml.md#survey-mosaic-cutouts-cfht-megapipe). Rice `.fz`
+[ML with FITS](https://github.com/astroai/torchfits/blob/main/docs/examples-ml.md). Rice `.fz`
 MegaCam cutouts remain a separate comparison (tile decompress inside CFITSIO).
 
 ## Cold-start and the torch boundary
@@ -271,7 +272,7 @@ the torch-linked extension's, and `tests/test_torch_boundary.py` checks the
 library's own dependency list with `otool -L` / `ldd`.
 
 Sample baseline (cold process, spawn to exit, minimum of 5, macOS arm64,
-Python 3.13.15, 2026-09-25):
+Python 3.13.16, 2026-10-22; the two 1.3.0 rows were re-measured today):
 
 | Entry point | Cold ms | Loads torch | Budget |
 |---|---:|---|---:|
@@ -287,8 +288,8 @@ Python 3.13.15, 2026-09-25):
 | `read_table_info` | 57 | no | 120 ms |
 | `_core.read_colnames` (library only) | 35 | no | 80 ms |
 | `_core.read_header_dict` (library only) | 33 | no | 80 ms |
-| `open` + `hdul[1].header` | 222 | no | 250 ms |
-| `table.read` (Arrow) | 515 | no | 600 ms |
+| `open` + `hdul[1].header` | 61 | no | 120 ms |
+| `table.read` (Arrow) | 858 | yes | 1000 ms |
 | `table.schema` | 167 | no | 600 ms |
 | `read_tensor` (tensor destination) | 770 | yes | — |
 | `table.read_torch` (tensor destination) | 737 | yes | — |
@@ -300,11 +301,14 @@ The ~30 ms floor is interpreter start. Three rows are worth reading carefully:
   `libtorchfits_core` plus one query, with no `torchfits` package machinery. The
   metadata rows above sit ~22 ms higher, which is the Python-side caching and
   path-guard layer.
-* `open` + `hdul[1].header` is **not** on the core path yet. `torchfits.open`
-  returns an `HDUList` that owns a native handle, and that handle is the same
-  object the tensor readers take, so it must come from the torch-linked
-  extension. Its 250 ms budget is measured, not aspirational; making the handle
-  lazy is tracked in [roadmap](roadmap.md).
+* `open` + `hdul[1].header` now lists HDUs and parses headers in
+  `libtorchfits_core`; the torch-linked handle is opened lazily by the first
+  `.data` / `.to_tensor()` call. It is 61 ms cold instead of 222 ms.
+* `table.read` (Arrow) is the remaining boundary exception: the destination
+  never creates THPVariables, but the raw reader still lives in `torchfits._C`,
+  whose import preloads torch when it is installed. That is why its budget is
+  1000 ms and why the table says `yes`; moving the raw reader into the core is
+  the next step tracked in the [torchfits roadmap](https://github.com/astroai/torchfits/blob/main/docs/roadmap.md).
 * The Arrow rows are budgeted from the *slow* end of their own spread, not the
   fastest sample. `table.read` has measured between 461 and 529 ms (minimum of
   five) across runs on this machine, so a 500 ms gate passed only on a good day
@@ -328,7 +332,7 @@ pixi run python benchmarks/bench_import_boundary.py --strict  # boundary + timin
 |---|---|---|
 | fitsio parity | `pixi run pytest tests/test_fitsio_upstream_smoke.py -q` | Common fitsio image, header, table, compression, and checksum workflows |
 | Astropy parity | `pixi run pytest tests/test_astropy_upstream_smoke.py -q` | Common Astropy HDU, header, image, compressed-image, table, and scaled-data workflows |
-| Package isolation | `pixi run pytest tests/test_package_isolation.py tests/test_docs_integrity.py -q` | Clean FITS-only package boundary and docs contract |
+| Subject import | `pixi run test` | fitsio and astropy upstream smokes against the installed wheel |
 
 ## Reproducing
 
@@ -337,18 +341,18 @@ pixi run bench-fits
 pixi run bench-fitstable
 pixi run bench-all
 pixi run bench-ml
-bash scripts/fetch_cfht_megacam_sample.sh && pixi run bench-megacam
-# Full transport matrix (mmap on + off, doubles CPU rows; GPU rows for both when CUDA/MPS):
-pixi run -e bench-gpu python benchmarks/bench_all.py --profile lab --scope all --mmap-matrix
+pixi run bench-megacam -- --data-dir /path/to/torchfits/benchmarks_data/cfht_megacam
+# Full transport matrix (mmap on + off; GPU rows when CUDA or MPS is present):
+pixi run python benchmarks/bench_all.py --profile lab --scope all --mmap-matrix
 ```
 
 For focused FITS partitions:
 
 ```bash
-pixi run -e bench-all python benchmarks/bench_all.py --scope fits --filter '^(tiny_)'
-pixi run -e bench-all python benchmarks/bench_all.py --scope fits --filter '^(small_)'
-pixi run -e bench-all python benchmarks/bench_all.py --scope fits --filter '^(medium_|large_)'
-pixi run -e bench-all python benchmarks/bench_all.py --scope fits --filter '^(scaled_|compressed_|mef_)'
+pixi run python benchmarks/bench_all.py --scope fits --filter '^(tiny_)'
+pixi run python benchmarks/bench_all.py --scope fits --filter '^(small_)'
+pixi run python benchmarks/bench_all.py --scope fits --filter '^(medium_|large_)'
+pixi run python benchmarks/bench_all.py --scope fits --filter '^(scaled_|compressed_|mef_)'
 ```
 
 Named **focused-benchmark** recipes (mmap on+off, no unrelated GPU matrix when scoped to tables):
@@ -375,7 +379,7 @@ mmap-on and mmap-off peers are never cross-compared.
 | `bench_gpu_transports.py` | fits (GPU) | CUDA/MPS image reads, cutouts, repeated cutouts (`disk→CPU→GPU` / `disk→RAM→GPU` rows) |
 | `bench_ml_loader.py` | fits (diagnostic) | PyTorch `DataLoader` throughput (not merged into `bench-all` CSV) |
 | `bench_gpu_memory.py` | fits (diagnostic) | GPU memory/leak checks (non-gating) |
-| `bench_denoise.py` | ml (scientific) | Noise2Noise CR-cleaning on real CFHT MegaCam frames (dark→blank framing, `torchfits` loaders vs Astropy; see [denoise-pipeline.md](denoise-pipeline.md)) |
+| `bench_denoise.py` | ml (scientific) | Noise2Noise CR-cleaning on real CFHT MegaCam frames (the example and write-up live in [torchfits](https://github.com/astroai/torchfits/blob/main/docs/denoise-pipeline.md)) |
 | `bench_import_boundary.py` | cold start | Fresh-process spawn-to-exit cost per entry point, split by whether torch was loaded; `--strict` gates on the boundary and per-entry-point budgets |
 
 ## Coverage matrix
@@ -386,7 +390,7 @@ scope or not yet wired into the published tables.
 | Dimension | Covered? | Where | Gap / caveat |
 |---|---|---|---|
 | Backends (torchfits / astropy / fitsio) | Yes | `bench_fits_io.py`, `bench_fitstable_io.py` | `fitsio` often excluded from mmap-fairness summaries; **uint** image comparators may be torchfits-only when astropy requires buffered fallback |
-| CPU vs GPU device | Partial | CPU: full matrix; GPU: tensor reads | GPU requires CUDA/MPS (`pixi run -e bench-gpu`); manual CI bench is CPU-only |
+| CPU vs GPU device | Partial | CPU: full matrix; GPU: tensor reads | GPU uses the CUDA or MPS torch already in the environment; the manual CI bench is CPU-only |
 | I/O transport `disk→RAM→CPU` | Yes | `bench-all` mmap-on pass | Median mixes many ops/sizes — coarse aggregate |
 | I/O transport `disk→CPU` (non-mmap) | Yes | `bench-all --mmap-matrix` mmap-off pass | Buffered host decode |
 | I/O transport `disk→RAM→GPU` | Partial | `bench_gpu_transports.py` (mmap on) | Tensor `read_full`, cutouts, repeated cutouts; tables until suite lands |
@@ -440,17 +444,19 @@ For apples-to-apples integer GPU timing, the suite also records
 CUDA lab numbers come from a headless GPU session on `@staging`. From a
 machine with `canfar` x509 auth:
 
+The session clones this repository and installs a torchfits wheel. It does not compile torchfits. Set `TORCHFITS_WHEEL` to a wheel URL or path when PyPI is not the subject you want measured.
+
 ```bash
 bash scripts/selfcheck_canfar_launcher.sh
-TORCHFITS_CANFAR_IMAGE=astroai/notebook:latest TORCHFITS_BENCH_MODE=exhaustive \
-  pixi run bench-canfar-gpu
+TORCHFITS_CANFAR_IMAGE=images.canfar.net/astroai/base:latest \
+  TORCHFITS_BENCH_MODE=exhaustive \
+  bash scripts/launch_canfar_gpu_bench.sh
 bash scripts/fetch_canfar_bench_vos.sh exhaustive_cuda_<stamp>
 bash scripts/patch_canfar_exhaustive_docs.sh exhaustive_cuda_<stamp>
 ```
 
 ```bash
-# Local CI + docs before push
-bash scripts/ci_local.sh
+pixi run test
 # Apple Silicon (MPS transport rows)
 pixi run bench-mps
 ```
