@@ -13,7 +13,7 @@
 # was interrupted is never thrown away.
 #
 # Env:
-#   TORCHFITS_MT_REPO    clone source           [sfabbro/torchfits]
+#   TORCHFITS_MT_REPO    clone source           [astroai/torchfits]
 #   TORCHFITS_MT_REF     branch or sha          [main]
 #   TORCHFITS_MT_TORCH   torch version          [2.14.1]
 #   TORCHFITS_MT_CU      CUDA flavor for gpu    [cu130]
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-REPO="${TORCHFITS_MT_REPO:-sfabbro/torchfits}"
+REPO="${TORCHFITS_MT_REPO:-astroai/torchfits}"
 REF="${TORCHFITS_MT_REF:-main}"
 TORCH_VERSION="${TORCHFITS_MT_TORCH:-2.14.1}"
 CU="${TORCHFITS_MT_CU:-cu130}"

@@ -58,13 +58,13 @@ pixi install
 # The subject is a torchfits wheel. This checkout does not vendor CFITSIO.
 if [[ "${TORCHFITS_BENCH_MODE}" != "exhaustive-cpu" ]]; then
   pixi run python -m pip install --no-cache-dir --force-reinstall \
-    "torch>=2.13,<2.14" \
-    --index-url "https://download.pytorch.org/whl/${TORCHFITS_BENCH_CU_FLAVOR:-cu129}"
+    "torch>=2.14,<2.15" \
+    --index-url "https://download.pytorch.org/whl/${TORCHFITS_BENCH_CU_FLAVOR:-cu130}"
 fi
 if [[ -n "${TORCHFITS_WHEEL:-}" ]]; then
   pixi run python -m pip install --no-cache-dir --force-reinstall --no-deps "${TORCHFITS_WHEEL}"
 else
-  pixi run python -m pip install --no-cache-dir --no-deps "torchfits>=1.2.1"
+  pixi run python -m pip install --no-cache-dir --no-deps "torchfits>=1.3.0"
 fi
 pixi run dev
 pixi run python -c "import torch, torchfits; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'torchfits', torchfits.__version__)"

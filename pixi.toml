@@ -16,7 +16,7 @@ fitsverify = ">=4.22"  # harness-only: cross-check `torchfits verify`
 matplotlib = ">=3.11"
 pandas = ">=2.2"
 psutil = ">=5"
-pytorch = ">=2.13,<2.14"
+pytorch = ">=2.14,<2.15"
 pip = ">=24"
 
 [activation.env]
