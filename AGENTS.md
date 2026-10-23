@@ -32,11 +32,9 @@ Pixi sets `PYTHONNOUSERSITE=1`. Do not install into `~/.local`.
 Do not auto-run full benchmark suites or launch CANFAR jobs.
 
 Tests that read `src/torchfits/cpp_src`, `extern/cfitsio`, or `tests/cpp`
-belong in torchfits. The pure-C CFITSIO microbench
-(`pixi run bench-cfitsio-direct`) needs that vendored tree and exits here
-without it.
+belong in torchfits.
 
-CANFAR launchers under `scripts/launch_canfar_*.sh` and
-`scripts/canfar_*_incontainer.sh` still contain steps that rebuild a
-torchfits extension (`bench-install`, `bench-gpu-install`). Those steps are
-the torchfits repo's job. Do not point them at this checkout.
+CANFAR launchers install a torchfits wheel inside the session
+(`scripts/launch_canfar_gpu_bench.sh`). They do not compile torchfits.
+`pixi run bench-cfitsio-direct` needs the vendored CFITSIO tree from a
+torchfits checkout and exits here without it.

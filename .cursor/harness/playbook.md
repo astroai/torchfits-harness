@@ -8,3 +8,6 @@
 
 - id: source-probes
   desc: Tests that read torchfits cpp_src, extern/cfitsio, or tests/cpp stay in the torchfits repo.
+
+- id: canfar-wheel
+  desc: CANFAR GPU benches clone this repo and pip-install a torchfits wheel. They do not vendor CFITSIO or call bench-install. The per-Python source matrix and the denoise session launcher were removed; the denoise example stays in torchfits.

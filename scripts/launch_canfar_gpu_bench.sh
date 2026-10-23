@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Launch a headless session on CANFAR staging, clone torchfits, run pixi bench/tests
-# (mode exhaustive / exhaustive-cpu / matrix), and capture platform logs locally under
-# benchmarks_results/canfar_<run-id>/. Matrix legs target any python x torch lane x device
-# from the prebuilt wheel bundle (see canfar_matrix_bench_incontainer.sh).
+# Launch a headless session on CANFAR staging, clone torchfits-harness, install a
+# torchfits wheel, and run the lab bench. Logs land under
+# benchmarks_results/canfar_<run-id>/.
 set -euo pipefail
 
 # Snapshot re-runs (poller_daemon.sh execs a copy under benchmarks_results/)
@@ -45,11 +44,11 @@ MEMORY="${TORCHFITS_CANFAR_MEMORY:-32}"
 # ponytail: CANFAR session names allow [A-Za-z0-9-] only (no dots/underscores)
 SAFE_TAG="$(printf '%s' "${RUN_ID}" | tr '_.' '--' | tr -cd '[:alnum:]-')"
 NAME="${TORCHFITS_CANFAR_NAME:-torchfits-gpu-${SAFE_TAG}}"
-REPO_URL="${TORCHFITS_GIT_URL:-https://github.com/astroai/torchfits.git}"
+REPO_URL="${TORCHFITS_GIT_URL:-https://github.com/astroai/torchfits-harness.git}"
 LOCAL_OUT="${ROOT_DIR}/benchmarks_results/canfar_${RUN_ID}"
 POLL_SECS="${TORCHFITS_CANFAR_POLL_SECS:-30}"
 MAX_WAIT_SECS="${TORCHFITS_CANFAR_MAX_WAIT_SECS:-14400}"
-CLONE_DIR="/scratch/torchfits"
+CLONE_DIR="/scratch/torchfits-harness"
 VOS_DEST="${TORCHFITS_VOS_DEST:-vos:sfabbro/torchfits-gpu-bench/${RUN_ID}}"
 
 mkdir -p "$LOCAL_OUT"
@@ -78,10 +77,10 @@ else
   # Optional: TORCHFITS_VOS_BUNDLE=vos:.../tree.bundle clones an uploaded git bundle
   # (lets CANFAR soak an unpushed local commit without a GitHub push).
   if [[ "${MODE}" == "matrix" ]]; then
-    INCONTAINER="scripts/canfar_matrix_bench_incontainer.sh"
-  else
-    INCONTAINER="scripts/canfar_gpu_bench_incontainer.sh"
+    echo "Per-Python source builds are not run from this repo. Publish a torchfits wheel and launch exhaustive or exhaustive-cpu." >&2
+    exit 1
   fi
+  INCONTAINER="scripts/canfar_gpu_bench_incontainer.sh"
   if [[ -n "${TORCHFITS_VOS_BUNDLE:-}" ]]; then
     # No $ or & here: Skaha rejects the session args as an illegal group reference.
     REMOTE_PLAIN="/opt/astroai/venv/cadc/bin/vcp ${TORCHFITS_VOS_BUNDLE} /scratch/torchfits.bundle; git clone /scratch/torchfits.bundle ${CLONE_DIR}; cd ${CLONE_DIR}; bash ${INCONTAINER}"
@@ -108,6 +107,7 @@ else
     --env "TORCHFITS_BENCH_CUDA=${TORCHFITS_BENCH_CUDA:-0}"
     --env "TORCHFITS_BENCH_CU_FLAVOR=${TORCHFITS_BENCH_CU_FLAVOR:-cu129}"
     --env "TORCHFITS_BENCH_WHEELS=${TORCHFITS_BENCH_WHEELS:-vos:sfabbro/torchfits-gpu-bench/wheels}"
+    --env "TORCHFITS_WHEEL=${TORCHFITS_WHEEL:-}"
     --env "TORCH_NUM_THREADS=${TORCH_NUM_THREADS:-${CPU}}"
     --env "OMP_NUM_THREADS=${OMP_NUM_THREADS:-${CPU}}"
   )
@@ -131,7 +131,7 @@ images. For astroai/base configure Harbor once:
   canfar config set registry.secret <harbor-token>
 
 Or use a listed image, e.g.:
-  TORCHFITS_CANFAR_IMAGE=astroai/notebook:latest pixi run bench-canfar-gpu
+  TORCHFITS_CANFAR_IMAGE=images.canfar.net/astroai/base:latest bash scripts/launch_canfar_gpu_bench.sh
 EOF
     fi
     echo "canfar create failed (rc=${CREATE_RC}); see ${CREATE_LOG}" >&2
@@ -192,6 +192,7 @@ if [[ "${TORCHFITS_CANFAR_FOREGROUND:-0}" != "1" && -z "${TORCHFITS_CANFAR_POLLE
     echo "export TORCHFITS_BENCH_CUDA=$(printf %q "${TORCHFITS_BENCH_CUDA:-0}")"
     echo "export TORCHFITS_BENCH_CU_FLAVOR=$(printf %q "${TORCHFITS_BENCH_CU_FLAVOR:-cu129}")"
     echo "export TORCHFITS_BENCH_WHEELS=$(printf %q "${TORCHFITS_BENCH_WHEELS:-vos:sfabbro/torchfits-gpu-bench/wheels}")"
+    echo "export TORCHFITS_WHEEL=$(printf %q "${TORCHFITS_WHEEL:-}")"
     echo "export TORCHFITS_CANFAR_POLL_SECS=$(printf %q "${POLL_SECS}")"
     echo "export TORCHFITS_CANFAR_MAX_WAIT_SECS=$(printf %q "${MAX_WAIT_SECS}")"
     echo "export TORCHFITS_CANFAR_EXISTING_SESSION=$(printf %q "${SESSION_ID}")"
