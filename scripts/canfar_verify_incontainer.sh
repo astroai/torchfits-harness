@@ -101,7 +101,7 @@ if [[ -n "${TORCHFITS_WHEEL:-}" ]]; then
 elif [[ -n "${TORCHFITS_VERSION:-}" ]]; then
   WHEEL_SPEC="torchfits==${TORCHFITS_VERSION}"
 else
-  WHEEL_SPEC="torchfits>=1.2.1"
+  WHEEL_SPEC="torchfits>=1.3.0"
 fi
 echo "subject spec: ${WHEEL_SPEC}"
 "$ENV_PY" -m pip install --no-cache-dir --no-deps "${WHEEL_SPEC}"

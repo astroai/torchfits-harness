@@ -16,7 +16,7 @@ fitsverify = ">=4.22"  # harness-only: cross-check `torchfits verify`
 matplotlib = ">=3.11"
 pandas = ">=2.2"
 psutil = ">=5"
-pytorch = ">=2.13,<2.14"
+pytorch = ">=2.14,<2.15"
 pip = ">=24"
 
 [activation.env]
@@ -34,6 +34,8 @@ bench-fits = "python benchmarks/bench_all.py --profile user --fits-only"
 bench-fitstable = "python benchmarks/bench_all.py --profile user --fitstable-only"
 bench-mps = "python benchmarks/bench_all.py --profile user --fits-only"
 bench-all = "python benchmarks/bench_all.py --profile user --scope all"
+bench-ml = "python benchmarks/bench_ml_loader.py"
+bench-megacam = "python benchmarks/bench_megacam_cutouts.py"
 bench-suite = "bash scripts/bench_suite.sh"
 bench-exhaustive-local = "bash scripts/bench_exhaustive_local.sh"
 bench-deficit-focus = "bash scripts/bench_deficit_focus.sh"

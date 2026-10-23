@@ -9,7 +9,7 @@ description = "Benchmarks, upstream parity, and migration notes for torchfits"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-dependencies = ["torchfits>=1.2.1"]
+dependencies = ["torchfits>=1.3.0"]
 
 [project.optional-dependencies]
 test = [
