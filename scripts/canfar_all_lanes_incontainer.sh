@@ -45,7 +45,11 @@ export PYTHONNOUSERSITE=1
 mkdir -p "$PIXI_HOME" "$PIXI_CACHE_DIR" "$PIP_CACHE_DIR" "$TMPDIR"
 
 CORPUS_TIER="${TORCHFITS_CORPUS_TIER:-ci}"
-export TORCHFITS_CORPUS_DIR="${DATA_ROOT}/corpus"
+# The docs tour reads the checkout-relative `benchmarks_data/corpus` path.
+# Keeping the override on that layout means the env-aware fixture and the
+# documented path resolve to the same file; the old `${DATA_ROOT}/corpus`
+# passed the fixture while `torchfits info` reported file-not-found.
+export TORCHFITS_CORPUS_DIR="${DATA_ROOT}/benchmarks_data/corpus"
 export TORCHFITS_CORPUS_TIER="$CORPUS_TIER"
 LANE_SECS="${TORCHFITS_LANE_SECS:-1800}"
 
