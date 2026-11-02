@@ -17,7 +17,7 @@
 #   TORCHFITS_GPU_LANES      lanes for the GPU session            [bench-gpu]
 #   TORCHFITS_DATA_ROOT      persistent data on the scratch mount [/scratch/torchfits-data]
 #   TORCHFITS_CORPUS_TIER    ci | full                            [ci]
-#   TORCHFITS_VERSION        exact torchfits release to test      [unset: >=1.3.0]
+#   TORCHFITS_VERSION        exact torchfits release to test      [unset: latest]
 #   TORCHFITS_REF            torchfits checkout ref               [main]
 #   TORCHFITS_ALL_CPU/_MEMORY/_MAX_WAIT_SECS/_IMAGE
 set -euo pipefail

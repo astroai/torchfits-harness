@@ -19,7 +19,7 @@
 #   TORCHFITS_LANES        comma/space list, or "all"                     [all]
 #   TORCHFITS_DATA_ROOT    persistent data (corpus, samples, checkout)    [/scratch/torchfits-data]
 #   TORCHFITS_HARNESS_RUN_ID                                              [lanes_<UTC>]
-#   TORCHFITS_WHEEL        pip spec or path for the subject               [torchfits>=1.3.0]
+#   TORCHFITS_WHEEL        pip spec or path for the subject               [torchfits, latest]
 #   TORCHFITS_VERSION      exact release to install (wins over the floor)
 #   TORCHFITS_REF          torchfits checkout ref, for examples/oracle    [main]
 #   TORCHFITS_CORPUS_TIER  ci | full                                      [ci]
@@ -89,9 +89,9 @@ pixi run dev > "${LOG_DIR}/pixi-dev.log" 2>&1 || {
   exit 1
 }
 
-# From here on the environment's interpreter is driven directly: every further
-# `pixi run` re-syncs from pixi.lock and would put the locked torchfits back,
-# which is how a lane silently tests a different version than it reports.
+# From here on the environment's interpreter is driven directly. pixi.lock no
+# longer carries torchfits, so `pixi run` would keep the subject, but driving
+# one interpreter keeps the reported and the tested subject the same.
 ENV_PY="$(pixi run python -c 'import sys; print(sys.executable)' | tail -1)"
 echo "env python: ${ENV_PY}"
 # The wheel's console script lands in the environment's bin, which is not on
@@ -118,7 +118,8 @@ if [[ -n "${TORCHFITS_WHEEL:-}" ]]; then
 elif [[ -n "${TORCHFITS_VERSION:-}" ]]; then
   WHEEL_SPEC="torchfits==${TORCHFITS_VERSION}"
 else
-  WHEEL_SPEC="torchfits>=1.3.0"
+  # Unpinned: the latest release is the default subject.
+  WHEEL_SPEC="torchfits"
 fi
 echo "subject spec: ${WHEEL_SPEC}"
 "$ENV_PY" -m pip install -q --no-cache-dir --no-deps "$WHEEL_SPEC" \

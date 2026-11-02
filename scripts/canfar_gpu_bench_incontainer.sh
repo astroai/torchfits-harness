@@ -69,7 +69,7 @@ fi
 if [[ -n "${TORCHFITS_WHEEL:-}" ]]; then
   pixi run python -m pip install --no-cache-dir --force-reinstall --no-deps "${TORCHFITS_WHEEL}"
 else
-  pixi run python -m pip install --no-cache-dir --no-deps "torchfits>=1.3.0"
+  pixi run python -m pip install --no-cache-dir --no-deps torchfits
 fi
 pixi run dev
 pixi run python -c "import torch, torchfits; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'torchfits', torchfits.__version__)"
