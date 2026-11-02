@@ -318,6 +318,8 @@ def test_numeric_columns_agree_with_fitsio(source: dict[str, Any]) -> None:
         pytest.skip("multi-file source")
     if str(path).endswith(".gz"):
         pytest.skip("fitsio does not open gzip containers")
+    fitsio = pytest.importorskip("fitsio")
+    compared = 0
     with fits.open(path, memmap=True) as hdul:
         for index, hdu in enumerate(hdul):
             if not isinstance(hdu, fits.BinTableHDU):
@@ -327,12 +329,10 @@ def test_numeric_columns_agree_with_fitsio(source: dict[str, Any]) -> None:
             if nrows == 0:
                 continue
             stop = min(500, nrows)
-            try:
-                import fitsio
-
-                table = fitsio.read(str(path), ext=index + 1, rows=(0, stop))
-            except Exception as exc:  # noqa: BLE001 - comparator availability
-                pytest.skip(f"fitsio cannot read hdu {index}: {exc}")
+            # fitsio's ``ext`` is the 0-based HDU index and ``rows`` lists row
+            # indices, so the first ``stop`` rows are ``arange(stop)``.
+            table = fitsio.read(str(path), ext=index, rows=np.arange(stop))
+            assert len(table) == stop, (index, len(table), stop)
             torch_cols = tf_table.read_torch(str(path), hdu=index, start_row=1, num_rows=stop)
             for name in data.columns.names:
                 if name not in torch_cols or name not in table.dtype.names:
@@ -341,6 +341,7 @@ def test_numeric_columns_agree_with_fitsio(source: dict[str, Any]) -> None:
                 if expected.dtype.kind not in "iuf":
                     continue
                 got = torch_cols[name].numpy()
+                assert got.shape == expected.shape, (index, name, got.shape)
                 np.testing.assert_allclose(
                     np.asarray(got, dtype=np.float64),
                     np.asarray(expected, dtype=np.float64),
@@ -349,3 +350,6 @@ def test_numeric_columns_agree_with_fitsio(source: dict[str, Any]) -> None:
                     equal_nan=True,
                     err_msg=f"hdu {index} col {name}",
                 )
+                compared += 1
+    if compared == 0:
+        pytest.skip("no numeric binary-table column to compare")
