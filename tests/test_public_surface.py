@@ -49,6 +49,21 @@ def test_registry_matches_installed_torchfits() -> None:
     )
 
 
+def test_surface_matches_whole_words_only(monkeypatch) -> None:
+    """A short name must not be "exercised" by a longer word that contains it."""
+    fake = {surface.TESTS_DIR / "test_fake.py": "toolbox = read_header(path)"}
+    monkeypatch.setattr(surface, "_test_sources", lambda: fake)
+    entries = [
+        surface.Entry("torchfits.hdu.to", "function"),
+        surface.Entry("torchfits.read", "function"),
+        surface.Entry("torchfits.read_header", "function"),
+    ]
+    hits = surface.exercised(entries)
+    assert hits[entries[0]] == []
+    assert hits[entries[1]] == []
+    assert hits[entries[2]] == ["tests/test_fake.py"]
+
+
 def test_no_public_symbol_is_unexercised() -> None:
     """Every public symbol appears in at least one test file."""
     missing, _ = surface.report(surface.collect())

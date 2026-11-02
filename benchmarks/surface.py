@@ -143,14 +143,14 @@ def exercised(entries: list[Entry]) -> dict[Entry, list[str]]:
 
     A dotted path is matched on its last segment (``TableHDU.write`` on
     ``write``) because tests rarely spell out owners; root exports are matched
-    on the full name. Names shorter than three characters must appear as a full
-    word, since e.g. ``to`` would otherwise match prose.
+    on the full name. Every name must appear as a whole word: a substring match
+    would let ``to`` hit prose and ``read`` hit ``read_header``.
     """
     sources = _test_sources()
     hits: dict[Entry, list[str]] = {}
     for entry in entries:
         leaf = entry.path.rsplit(".", 1)[-1]
-        pattern = re.compile(rf"\b{re.escape(leaf)}\b" if len(leaf) > 2 else re.escape(leaf))
+        pattern = re.compile(rf"\b{re.escape(leaf)}\b")
         hits[entry] = [
             path.relative_to(ROOT).as_posix()
             for path, text in sources.items()
