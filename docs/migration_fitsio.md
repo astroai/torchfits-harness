@@ -2,7 +2,7 @@
 
 Side-by-side comparison and migration recipes for common astronomical FITS I/O tasks between `fitsio` and `torchfits`.
 
-For a complete breakdown of supported FITS standard features, see the [Feature Parity Matrix](parity.md). For end-to-end Python examples, see [Python Workflows](python-workflows.md) and [Examples](examples.md).
+For a complete breakdown of supported FITS standard features, see the [Feature Parity Matrix](parity.md). For end-to-end Python examples, see torchfits' [Python Workflows](https://github.com/astroai/torchfits/blob/main/docs/python-workflows.md) and [Examples](https://github.com/astroai/torchfits/blob/main/docs/examples.md); for supported versions and removed options, its [Compatibility](https://github.com/astroai/torchfits/blob/main/docs/compatibility.md) page.
 
 ---
 
@@ -15,7 +15,7 @@ For a complete breakdown of supported FITS standard features, see the [Feature P
 | **Read with memory-mapping** | *(Not supported in fitsio)* | `torchfits.read_tensor(path, hdu=0, mmap=True)` |
 | **Direct GPU placement** | `torch.from_numpy(fitsio.read(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
 | **Read header only** | `fitsio.read_header(path)` | `torchfits.read_header(path, hdu=0)` |
-| **Windowed cutout read** | `fitsio.read(path, ext=0, rows=[y1, y2], cols=[x1, x2])` | `torchfits.read_subset(path, hdu=0, x1=x1, y1=y1, x2=x2, y2=y2)` |
+| **Windowed cutout read** | `fitsio.FITS(path)[0][y1:y2, x1:x2]` | `torchfits.read_subset(path, hdu=0, x1=x1, y1=y1, x2=x2, y2=y2)` |
 
 ---
 

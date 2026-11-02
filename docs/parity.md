@@ -2,7 +2,7 @@
 
 A comprehensive comparison of astronomical FITS standard features supported by `torchfits` compared to `astropy.io.fits` and `fitsio`.
 
-For environment, Python, and PyTorch ABI compatibility, see [Environment Compatibility](compatibility.md).
+For environment, Python, and PyTorch ABI compatibility, see torchfits' [Environment Compatibility](https://github.com/astroai/torchfits/blob/main/docs/compatibility.md).
 
 ---
 
@@ -42,12 +42,12 @@ smokes and behaviour replays referenced by this matrix are inventoried in
 
 | Feature | Status | Comparator | Implementation Details & Behavior |
 |---|:---:|---|---|
-| **2D Image Reading & Writing** | **Supported** | `astropy.io.fits`, `fitsio` | Direct C++ decoding to PyTorch tensors (`float32`, `float64`, `int16`, `int32`, `int64`, `uint8`). |
+| **2D Image Reading & Writing** | **Supported** | `astropy.io.fits`, `fitsio` | Direct C++ decoding to PyTorch tensors (`float32`, `float64`, `uint8`, `int8`, `int16`, `uint16`, `int32`, `uint32`, `int64`, `uint64`). |
 | **3D/4D Datacubes** | **Supported** | `astropy.io.fits`, `fitsio` | Reads multi-dimensional cubes (e.g. IFU datacubes, radio velocity channels) into $[D, H, W]$ tensors. |
 | **Multi-Extension (MEF)** | **Supported** | `astropy.io.fits.HDUList` | HDU iteration by integer index or extension name (`hdul["SCI"]`), lazy metadata scanning. |
 | **Windowed Cutout Reads** | **Supported** | `astropy.io.fits`, `fitsio` | Fast pixel sub-region extraction via `read_subset` and zero-overhead `open_subset_reader`. |
-| **Unsigned Integers (`uint16`/`uint32`)** | **Supported** | `BZERO` convention | Vectorized SIMD decoding of unsigned integers into native PyTorch integer tensors. |
-| **Physical Scaling (`BSCALE`/`BZERO`)** | **Supported** | FITS Standard | Automatically scales raw detector counts to physical float32/float64 values. The sum is applied in double precision before the final cast; a large `BZERO` therefore matches astropy to float32 rounding (a few 1e-6 relative on a real MegaCam frame), not bit-for-bit. |
+| **Unsigned and signed-byte integers** | **Supported** | `BZERO` convention | `uint16`/`uint32`/`uint64` are stored signed with `BZERO` = `2**15`/`2**31`/`2**63`, and `int8` as unsigned bytes with `BZERO` = `-128`; both read and write give exact integer tensors, as in astropy. fitsio cannot read a `uint64` image (CFITSIO status 412), whoever wrote it. |
+| **Physical Scaling (`BSCALE`/`BZERO`)** | **Supported** | FITS Standard | Any other `BSCALE`/`BZERO` scales to `float32` for `BITPIX` 8/16 and `float64` for `BITPIX` 32/64, the same dtypes as astropy. The sum is applied in double precision before the final cast; a large `BZERO` therefore matches astropy to float32 rounding (a few 1e-6 relative on a real MegaCam frame), not bit-for-bit. |
 
 ---
 
@@ -58,7 +58,7 @@ smokes and behaviour replays referenced by this matrix are inventoried in
 | **Rice (`RICE_1`)** | **Supported** | Fast tile decompression via CFITSIO backend | Compressed tile writing (`compress="rice"`) |
 | **Gzip (`GZIP_1`, `GZIP_2`)** | **Supported** | Byte-level and tile-compressed gzip streams | Compressed tile writing (`compress="gzip"`) |
 | **H-Compress (`HCOMPRESS_1`)** | **Supported** | Multi-resolution astronomical wavelet decoding | Compressed tile writing (`compress="hcompress"`) |
-| **PLIO (`PLIO_1`)** | **Supported** | IRAF-style pixel list mask decoding | Supported |
+| **PLIO (`PLIO_1`)** | **Supported** | IRAF-style pixel list mask decoding | Non-negative integers below `2**24`, and full-range `uint16`. CFITSIO stores `uint16` tiles without the `BZERO` offset; fitsio agrees, astropy reads those pixels 32768 off. |
 
 ---
 
@@ -70,7 +70,7 @@ smokes and behaviour replays referenced by this matrix are inventoried in
 | **ASCII Tables (`TABLE`)** | **Supported** | `astropy.io.fits.TableHDU` | Full column parsing and type inference for fixed-width ASCII tables. |
 | **Column Projection** | **Supported** | `columns=["ra", "dec"]` | Reads only requested columns from disk, skipping unneeded byte offsets. |
 | **Row Slicing (`start_row`, `num_rows`)** | **Supported** | `fitsio` row limits | Reads contiguous row ranges without scanning earlier or later records. |
-| **Predicate Filtering (`where=`)** | **Supported** | `fitsio` WHERE clauses | SQL expression pushdown (`"mag < 21.0 AND flag == 0"`) executed during scanning. |
+| **Predicate Filtering (`where=`)** | **Supported** | `fitsio` WHERE clauses | SQL expression pushdown (`"mag < 21.0 AND flag == 0"`) executed during scanning. `TNULL` cells and float NaN are unknown: no comparison selects them and `IS NULL` does. |
 | **In-Place Table Mutation** | **Supported** | `table.update_rows(...)` | Fast in-place column and cell updating on disk via memory-mapping. |
 
 ---
@@ -79,12 +79,12 @@ smokes and behaviour replays referenced by this matrix are inventoried in
 
 | Column Data Type | FITS Format Code | Support Status | Notes |
 |---|:---:|:---:|---|
-| **Numeric Columns** | `B`, `I`, `J`, `K`, `E`, `D` | **Supported** | Full integer and floating-point support. |
+| **Numeric Columns** | `B`, `I`, `J`, `K`, `E`, `D` | **Supported** | Full integer and floating-point support. `int8` is written as `B` with `TZERO = -128`, and `uint16`/`uint32`/`uint64` as `I`/`J`/`K` with `TZERO = 2**15`/`2**31`/`2**63`; all read back as exact integers (astropy reads the `int8` form as scaled `float64`). |
 | **Fixed-Width Strings** | `nA` | **Supported** | Decoded as Arrow string arrays with automatic space padding on update. |
 | **Boolean Bitmasks** | `X` | **Supported** | Bit-level MSB-first decoding into boolean tensors. |
 | **Complex Numbers** | `C`, `M` | **Partial** | Tensor path (`table.read_torch`) decodes `torch.complex64` / `complex128`. Arrow `table.read` raises `NotImplementedError`. |
 | **Variable-Length Arrays (VLA)** | `P`, `Q` | **Partial** | Supported via buffered CFITSIO reading; memory-mapped updates not supported. |
-| **Scaled Columns (`TSCALn`/`TZEROn`)** | `TSCAL`, `TZERO` | **Supported** | Linear physical count scaling to floating-point tensors. |
+| **Scaled Columns (`TSCALn`/`TZEROn`)** | `TSCAL`, `TZERO` | **Supported** | A `TZERO` that is one of the integer conventions above (with `TSCAL = 1`) keeps an exact integer dtype; any other scaling reads as `float64`, with `TNULL` cells as NaN. |
 
 ---
 
@@ -104,7 +104,7 @@ smokes and behaviour replays referenced by this matrix are inventoried in
 |---|:---:|---|
 | **Direct GPU Tensor Placement** | **Supported** | Load FITS images directly onto `device="cuda"` or `device="mps"` without NumPy intermediate steps. |
 | **PyTorch `Dataset` Integration** | **Supported** | Built-in `FitsImageDataset`, `FitsCutoutDataset`, `FitsCubeDataset`, and `FitsTableDataset`. |
-| **Multi-Worker `DataLoader`** | **Supported** | Factory `make_loader` with automatic batch collation and worker cache warmup. |
+| **Multi-Worker `DataLoader`** | **Supported** | `make_loader` is a `DataLoader` factory with FITS-aware batch collation; datasets fetch each remote file once into the disk cache. |
 | **Header-Aware Transforms** | **Supported** | Astronomical image stretches (Arcsinh, ZScale, Lupton RGB) implemented as PyTorch transforms. |
 
 ---
