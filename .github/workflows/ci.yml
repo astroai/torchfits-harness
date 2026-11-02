@@ -32,7 +32,12 @@ jobs:
             -c conda-forge
             fitsverify
       - name: Upstream parity smokes
-        run: pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q
+        # A login shell activates the micromamba env, so fitsverify is on PATH;
+        # without it test_verify_vs_fitsverify skips silently.
+        shell: bash -el {0}
+        run: |
+          command -v fitsverify
+          pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q
       - name: Benchmark smoke
         run: python benchmarks/bench_cpp_backend.py
       - name: Contract gates (CLI, public surface, corpus benchmark, docs tour)
