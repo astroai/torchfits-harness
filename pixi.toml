@@ -1,8 +1,6 @@
 [workspace]
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
-# Same manager pin as torchfits so the two locks are solved with one Pixi.
-requires-pixi = "==0.82.0"
 
 [dependencies]
 python = "3.13.*"
