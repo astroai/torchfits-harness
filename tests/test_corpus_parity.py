@@ -1,8 +1,9 @@
 """Value parity on real archive files, with astropy and fitsio as oracles.
 
 The corpus is fetched by ``scripts/fetch_corpus.py`` and is gitignored, so every
-test skips cleanly until the files are present. Set
-``TORCHFITS_CORPUS_TIER=ci`` to keep a run to the ~8 MB tier.
+test skips cleanly until the files are present. The run covers the ~8 MB CI
+tier that ``pixi run corpus-fetch`` fetches; set ``TORCHFITS_CORPUS_TIER=full``
+after ``pixi run corpus-fetch-full`` to cover the whole corpus.
 
 What is compared, per HDU:
 
@@ -44,7 +45,7 @@ if str(ROOT) not in sys.path:
 
 from benchmarks import corpus  # noqa: E402
 
-TIER = os.environ.get("TORCHFITS_CORPUS_TIER", "full")
+TIER = os.environ.get("TORCHFITS_CORPUS_TIER", "ci")
 SOURCES = [
     source
     for source in corpus.sources(tier=TIER)

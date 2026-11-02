@@ -27,3 +27,23 @@ def _clear_env_profile(monkeypatch):
     for var in CACHE_ENV_SENTINELS:
         monkeypatch.delenv(var, raising=False)
     yield
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Say how many tests skipped because a corpus file was never fetched.
+
+    The corpus is gitignored, so on a fresh clone those skips are expected; the
+    line keeps them from passing for real coverage in a green run.
+    """
+    skipped = terminalreporter.stats.get("skipped", [])
+    missing = [
+        report
+        for report in skipped
+        if "is not present; run `pixi run corpus-fetch" in str(report.longrepr)
+    ]
+    if missing:
+        terminalreporter.write_line(
+            f"{len(missing)} test(s) skipped: corpus files not fetched "
+            "(`pixi run corpus-fetch` for the CI tier, "
+            "`pixi run corpus-fetch-full` for everything)"
+        )

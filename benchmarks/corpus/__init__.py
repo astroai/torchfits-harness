@@ -101,7 +101,7 @@ def require(source: dict[str, Any]):
     if not files or not all(path.is_file() for path in files):
         pytest.skip(
             f"corpus source {source['id']!r} is not present; run "
-            "`pixi run corpus-fetch --tier full`"
+            f"`pixi run corpus-fetch{'' if source.get('tier') == 'ci' else '-full'}`"
         )
     return files[0] if len(files) == 1 else files
 
