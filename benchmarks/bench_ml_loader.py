@@ -149,18 +149,25 @@ def bench_loader(
 
     import torch as _torch
 
-    start_time = time.time()
+    def _sync() -> None:
+        # Async H2D copies must land before the clock stops (M16), on CUDA and
+        # on MPS alike.
+        if device.startswith("cuda") and _torch.cuda.is_available():
+            _torch.cuda.synchronize()
+        elif device.startswith("mps") and _torch.backends.mps.is_available():
+            _torch.mps.synchronize()
+
+    _sync()
+    start_time = time.perf_counter()
     total_pixels = 0
     for _ in range(n_epochs):
         for batch in loader:
             if device != "cpu":
                 batch = batch.to(device, non_blocking=True)
             total_pixels += batch.numel()
-    # Async H2D copies must land before the clock stops (M16).
-    if device != "cpu" and device.startswith("cuda") and _torch.cuda.is_available():
-        _torch.cuda.synchronize()
+    _sync()
 
-    total_time = time.time() - start_time
+    total_time = time.perf_counter() - start_time
     pixels_sec = total_pixels / total_time
     mb_sec = (total_pixels * 4) / (1024 * 1024) / total_time  # float32-equivalent
     print(f"{description:<28}: {pixels_sec:>12.0f} pixels/s ({mb_sec:>7.1f} MB/s)")
