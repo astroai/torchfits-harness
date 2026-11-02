@@ -7,9 +7,10 @@ installed wheel or a symbol appears in no test.
 
 | Namespace | Exercised | Total |
 |---|---:|---:|
-| `torchfits` | 38 | 38 |
+| `torchfits` | 39 | 39 |
 | `torchfits.Card` | 1 | 1 |
 | `torchfits.HDUList` | 6 | 6 |
+| `torchfits.HDUNotFoundError` | 1 | 1 |
 | `torchfits.Header` | 16 | 16 |
 | `torchfits.TableHDU` | 23 | 23 |
 | `torchfits.TableHDURef` | 27 | 27 |
@@ -21,4 +22,4 @@ installed wheel or a symbol appears in no test.
 | `torchfits.transforms` | 100 | 100 |
 | `torchfits.where` | 6 | 6 |
 
-**Total: 369 symbols, 0 unexercised.**
+**Total: 371 symbols, 0 unexercised.**

@@ -38,6 +38,14 @@
       "kind": "method"
     },
     {
+      "path": "torchfits.HDUNotFoundError",
+      "kind": "class"
+    },
+    {
+      "path": "torchfits.HDUNotFoundError.for_request",
+      "kind": "method"
+    },
+    {
       "path": "torchfits.Header",
       "kind": "class"
     },
