@@ -140,3 +140,38 @@ def test_summary_reports_tiers_and_archives() -> None:
     assert summary["tier"] == "full"
     assert "image" in summary["families"]
     assert summary["declared_bytes"] >= 10 * 1024**3
+
+
+def test_corrupt_download_is_neither_kept_nor_recorded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A body whose sha256 is wrong must not land in place or in the manifest."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import fetch_corpus
+
+    body = tmp_path / "served.fits"
+    body.write_bytes(b"not the file the manifest describes")
+    source = {
+        "id": "fake_source",
+        "kind": "https",
+        "tier": "ci",
+        "family": "image",
+        "archive": "test",
+        "filename": "fake.fits",
+        "url": body.as_uri(),
+        "bytes": body.stat().st_size,
+        "sha256": "0" * 64,
+    }
+    manifest = {"sources": [dict(source)]}
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setenv("TORCHFITS_CORPUS_DIR", str(tmp_path / "corpus"))
+    monkeypatch.setattr(fetch_corpus, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(fetch_corpus, "load_manifest", lambda: json.loads(manifest_path.read_text()))
+    monkeypatch.setattr(fetch_corpus, "sources", lambda tier: [dict(source)])
+
+    assert fetch_corpus.main(["--update-manifest"]) == 1
+    dest = tmp_path / "corpus" / "fake_source" / "fake.fits"
+    assert not dest.exists()
+    assert not dest.with_name("fake.fits.part").exists()
+    assert json.loads(manifest_path.read_text())["sources"][0]["sha256"] == "0" * 64

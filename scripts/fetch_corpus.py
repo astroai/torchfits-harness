@@ -4,10 +4,10 @@
 Examples::
 
     pixi run corpus-fetch                 # CI tier (~8 MB)
-    pixi run corpus-fetch --tier full     # the whole corpus (~16 GB)
+    pixi run corpus-fetch-full            # the whole corpus (~16 GB)
     pixi run corpus-fetch --only manga    # match source ids
     pixi run corpus-fetch --verify        # hashes only, no network
-    pixi run corpus-fetch --update-manifest
+    pixi run corpus-fetch --update-manifest   # record hashes of verified files
 
 Files land in ``benchmarks_data/corpus/<source-id>/`` (gitignored). Downloads
 resume from a ``.part`` file, so a dropped connection never restarts 6 GB.
@@ -56,7 +56,26 @@ def _human(n: float) -> str:
     return f"{n:.1f} TB"
 
 
-def _download(url: str, dest: Path, *, expected: int | None) -> None:
+def _promote(part: Path, dest: Path, sha256: str | None) -> None:
+    """Move a complete ``.part`` into place only once its hash is right.
+
+    A corrupt or truncated body must never become ``dest``: the next run would
+    treat it as fetched, and ``--update-manifest`` would record its hash.
+    """
+    if sha256:
+        actual = sha256_file(part)
+        if actual != sha256:
+            part.unlink()
+            raise RuntimeError(
+                f"sha256 mismatch for {dest.name}: {actual} != {sha256}; "
+                "discarded the download"
+            )
+    part.replace(dest)
+
+
+def _download(
+    url: str, dest: Path, *, expected: int | None, sha256: str | None = None
+) -> None:
     """Stream ``url`` into ``dest``, resuming a previous ``.part``."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
@@ -69,7 +88,7 @@ def _download(url: str, dest: Path, *, expected: int | None) -> None:
         response = urllib.request.urlopen(request, timeout=60)
     except urllib.error.HTTPError as exc:
         if exc.code == 416 and expected is not None and start == expected:
-            part.replace(dest)
+            _promote(part, dest, sha256)
             return
         raise
     with response:
@@ -104,7 +123,7 @@ def _download(url: str, dest: Path, *, expected: int | None) -> None:
                 f"size mismatch for {dest.name}: got {received}, expected {expected}"
             )
     sys.stderr.write("\r" + " " * 60 + "\r")
-    part.replace(dest)
+    _promote(part, dest, sha256)
 
 
 def _check_hash(source: dict[str, Any], path: Path) -> str | None:
@@ -142,16 +161,20 @@ def _fetch(source: dict[str, Any], *, verify_only: bool) -> tuple[bool, str]:
             return True, f"present ({_human(dest.stat().st_size)})"
         sys.stderr.write(f"  {problem}; refetching\n")
     sys.stderr.write(f"  GET {source['url']}\n")
-    _download(source["url"], dest, expected=expected)
-    problem = _check_hash(source, dest)
-    return (problem is None, problem or f"downloaded ({_human(dest.stat().st_size)})")
+    if dest.is_file():
+        dest.unlink()  # failed its hash above; never leave it looking fetched
+    _download(source["url"], dest, expected=expected, sha256=source.get("sha256"))
+    return True, f"downloaded ({_human(dest.stat().st_size)})"
 
 
-def _update_manifest(chosen: list[dict[str, Any]]) -> None:
+def _update_manifest(chosen: list[dict[str, Any]], failed: set[str]) -> None:
+    """Record bytes/sha256 of the sources that fetched and verified cleanly."""
     manifest = load_manifest()
     by_id = {entry["id"]: entry for entry in manifest["sources"]}
     updated = 0
     for source in chosen:
+        if source["id"] in failed:
+            continue
         files = source_files(source)
         if not files or not all(path.is_file() for path in files):
             continue
@@ -224,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
             failures.append((source["id"], detail))
 
     if args.update_manifest:
-        _update_manifest(chosen)
+        _update_manifest(chosen, {source_id for source_id, _ in failures})
 
     if failures:
         print(f"\n{len(failures)} source(s) failed:", file=sys.stderr)

@@ -29,10 +29,11 @@ dev = "pip install -e . --no-deps"
 subject = "pip install --no-deps"
 test = "pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q"
 bench-cpp = "python benchmarks/bench_cpp_backend.py"
-# Real-archive corpus (~16 GB full tier; the CI tier is ~8 MB).
-corpus-fetch = "python scripts/fetch_corpus.py --tier full --update-manifest"
+# Real-archive corpus: the CI tier is ~8 MB, the full tier ~16 GB.
+corpus-fetch = "python scripts/fetch_corpus.py --tier ci"
+corpus-fetch-full = "python scripts/fetch_corpus.py --tier full"
 corpus-list = "python scripts/fetch_corpus.py --tier full --list"
-corpus-verify = "python scripts/fetch_corpus.py --tier full --verify"
+corpus-verify = "python scripts/fetch_corpus.py --tier ci --verify"
 corpus-test = "pytest tests/test_corpus_manifest.py tests/test_corpus_parity.py tests/test_operation_matrix.py tests/test_write_parity.py -q"
 oracle-test = "pytest tests/test_cfitsio_oracle.py -q"
 # Upstream behaviour replays: fitsio, astropy, CFITSIO, CCfits, EleFits, qfits, sfitsio.
