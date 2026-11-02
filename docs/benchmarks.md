@@ -436,9 +436,9 @@ dtype-equivalent for every scaled integer FITS file.
 For apples-to-apples integer GPU timing, the suite also records
 `torchfits_dtype_fair_device` (`read_tensor(..., raw_scale=True)`).
 
-**Training loops:** call
-`torchfits.cache.optimize_for_dataset(paths, avg_file_size_mb=…)` before
-`DataLoader` epochs so handle caches stay warm.
+**Training loops:** `torchfits.data.make_loader` is a plain `DataLoader`
+factory; remote files are fetched once by the dataset into
+`TORCHFITS_REMOTE_CACHE` (or `cache_dir=`), so later epochs read local copies.
 
 ### Refreshing GPU numbers (CANFAR staging)
 

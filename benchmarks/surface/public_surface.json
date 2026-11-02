@@ -70,6 +70,10 @@
       "kind": "method"
     },
     {
+      "path": "torchfits.Header.copy",
+      "kind": "method"
+    },
+    {
       "path": "torchfits.Header.get_comment",
       "kind": "method"
     },
@@ -242,6 +246,10 @@
       "kind": "method"
     },
     {
+      "path": "torchfits.TableHDURef.header",
+      "kind": "property"
+    },
+    {
       "path": "torchfits.TableHDURef.insert_column_file",
       "kind": "method"
     },
@@ -338,42 +346,6 @@
       "kind": "method"
     },
     {
-      "path": "torchfits.cache.CacheConfig",
-      "kind": "class"
-    },
-    {
-      "path": "torchfits.cache.CacheConfig.copy",
-      "kind": "method"
-    },
-    {
-      "path": "torchfits.cache.CacheConfig.for_environment",
-      "kind": "method"
-    },
-    {
-      "path": "torchfits.cache.CacheManager",
-      "kind": "class"
-    },
-    {
-      "path": "torchfits.cache.CacheManager.clear",
-      "kind": "method"
-    },
-    {
-      "path": "torchfits.cache.CacheManager.get_stats",
-      "kind": "method"
-    },
-    {
-      "path": "torchfits.cache.CacheManager.optimize_for_dataset",
-      "kind": "method"
-    },
-    {
-      "path": "torchfits.cache.cache_root",
-      "kind": "function"
-    },
-    {
-      "path": "torchfits.cache.clear",
-      "kind": "function"
-    },
-    {
       "path": "torchfits.cache.clear_all_caches",
       "kind": "function"
     },
@@ -382,35 +354,7 @@
       "kind": "function"
     },
     {
-      "path": "torchfits.cache.configure_for_environment",
-      "kind": "function"
-    },
-    {
-      "path": "torchfits.cache.get_cache_manager",
-      "kind": "function"
-    },
-    {
       "path": "torchfits.cache.get_cache_stats",
-      "kind": "function"
-    },
-    {
-      "path": "torchfits.cache.get_optimal_cache_config",
-      "kind": "function"
-    },
-    {
-      "path": "torchfits.cache.optimize_for_dataset",
-      "kind": "function"
-    },
-    {
-      "path": "torchfits.cache.remote_cache_root",
-      "kind": "function"
-    },
-    {
-      "path": "torchfits.cache.sample_cache_root",
-      "kind": "function"
-    },
-    {
-      "path": "torchfits.cache.stats",
       "kind": "function"
     },
     {
@@ -594,6 +538,10 @@
       "kind": "method"
     },
     {
+      "path": "torchfits.hdu.Header.copy",
+      "kind": "method"
+    },
+    {
       "path": "torchfits.hdu.Header.get_comment",
       "kind": "method"
     },
@@ -623,18 +571,6 @@
     },
     {
       "path": "torchfits.hdu.Header.update",
-      "kind": "method"
-    },
-    {
-      "path": "torchfits.hdu.TableDataAccessor",
-      "kind": "class"
-    },
-    {
-      "path": "torchfits.hdu.TableDataAccessor.columns",
-      "kind": "property"
-    },
-    {
-      "path": "torchfits.hdu.TableDataAccessor.keys",
       "kind": "method"
     },
     {
@@ -776,6 +712,10 @@
     {
       "path": "torchfits.hdu.TableHDURef.head",
       "kind": "method"
+    },
+    {
+      "path": "torchfits.hdu.TableHDURef.header",
+      "kind": "property"
     },
     {
       "path": "torchfits.hdu.TableHDURef.insert_column_file",
@@ -1524,10 +1464,6 @@
     {
       "path": "torchfits.where.where_columns_from_ast",
       "kind": "function"
-    },
-    {
-      "path": "torchfits.where.where_identifier_re",
-      "kind": "attribute"
     },
     {
       "path": "torchfits.write",

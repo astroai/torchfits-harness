@@ -13,7 +13,6 @@ import pytest
 import torch
 
 import torchfits
-from torchfits.cache import CacheConfig
 
 
 class TestCaching:
@@ -92,34 +91,16 @@ class TestCaching:
         # Verify it's a dictionary
         assert isinstance(stats, dict)
 
-        # Check for expected keys (dead never-updated counters removed:
-        # evictions/memory_usage_mb/disk_usage_gb were always 0 and are gone).
-        expected_keys = {
-            "hits",
-            "misses",
-            "io_hits",
-            "io_misses",
-            "io_total_requests",
-            "cpp_cache_size",
-            "config",
-            "hit_rate",
-        }
+        # The I/O engine's counters; the policy "config" block went with the
+        # cache-policy objects in 1.3.1.
+        expected_keys = {"hits", "misses", "hit_rate", "total_requests", "cache_size"}
         assert expected_keys.issubset(stats.keys())
+        assert "config" not in stats
 
         # Verify types of specific fields
         assert isinstance(stats["hits"], int)
         assert isinstance(stats["misses"], int)
         assert isinstance(stats["hit_rate"], float)
-        assert isinstance(stats["config"], dict)
-
-        # Check config keys
-        expected_config_keys = {
-            "max_files",
-            "max_memory_mb",
-            "disk_cache_gb",
-            "prefetch_enabled",
-        }
-        assert expected_config_keys.issubset(stats["config"].keys())
 
         # Basic hit_rate calculation check (should be 0.0 when hits=0, misses=0)
         assert stats["hit_rate"] == 0.0
@@ -494,272 +475,21 @@ class TestCaching:
             torchfits.clear_file_cache()
 
 
-class TestCacheManager:
-    """Test CacheManager functionality."""
+class TestCacheModuleFunctions:
+    """The cache helpers that survive the 1.3.1 removal of the policy objects."""
 
-    def test_get_cache_manager_singleton(self):
-        from torchfits.cache import get_cache_manager
+    def test_clear_cache_resets_engine_counters(self, tmp_path):
+        from torchfits.cache import clear_cache, get_cache_stats
 
-        manager1 = get_cache_manager()
-        manager2 = get_cache_manager()
-
-        assert manager1 is manager2
-
-
-class TestCacheConfig:
-    """Test CacheConfig functionality."""
-
-    def test_default_initialization(self):
-        config = CacheConfig()
-        assert config.max_files == 100
-        assert config.max_memory_mb == 1024
-        assert config.disk_cache_gb == 10
-        assert config.prefetch_enabled is True
-
-    def test_custom_initialization(self):
-        config = CacheConfig(
-            max_files=50, max_memory_mb=512, disk_cache_gb=5, prefetch_enabled=False
-        )
-        assert config.max_files == 50
-        assert config.max_memory_mb == 512
-        assert config.disk_cache_gb == 5
-        assert config.prefetch_enabled is False
-
-    @patch("torchfits.cache.os.sysconf")
-    def test_for_environment_no_psutil(self, mock_sysconf):
-        mock_sysconf.side_effect = ValueError("Simulated sysconf error")
-        config = CacheConfig.for_environment()
-        assert config.max_files == 100
-        assert config.max_memory_mb == 1024
-        assert config.disk_cache_gb == 5
-        assert config.prefetch_enabled is False
-
-    @patch("torchfits.cache.os.sysconf")
-    @patch.object(CacheConfig, "_is_hpc_environment", return_value=True)
-    def test_for_environment_hpc(self, mock_hpc, mock_sysconf):
-        def sysconf_mock(name):
-            if name == "SC_PAGE_SIZE":
-                return 4096
-            if name == "SC_PHYS_PAGES":
-                return (100 * (1024**3)) // 4096
-            raise ValueError()
-
-        mock_sysconf.side_effect = sysconf_mock
-
-        config = CacheConfig.for_environment()
-        assert config.max_files == 1000
-        assert config.max_memory_mb == int(100 * 1024 * 0.3)
-        assert config.disk_cache_gb == 50
-        assert config.prefetch_enabled is True
-
-    @patch("torchfits.cache.os.sysconf")
-    @patch.object(CacheConfig, "_is_hpc_environment", return_value=False)
-    @patch.object(CacheConfig, "_is_cloud_environment", return_value=True)
-    def test_for_environment_cloud(self, mock_cloud, mock_hpc, mock_sysconf):
-        def sysconf_mock(name):
-            if name == "SC_PAGE_SIZE":
-                return 4096
-            if name == "SC_PHYS_PAGES":
-                return (16 * (1024**3)) // 4096
-            raise ValueError()
-
-        mock_sysconf.side_effect = sysconf_mock
-
-        config = CacheConfig.for_environment()
-        assert config.max_files == 500
-        assert config.max_memory_mb == int(16 * 1024 * 0.2)
-        assert config.disk_cache_gb == 20
-        assert config.prefetch_enabled is True
-
-    @patch("torchfits.cache.os.sysconf")
-    @patch.object(CacheConfig, "_is_hpc_environment", return_value=False)
-    @patch.object(CacheConfig, "_is_cloud_environment", return_value=False)
-    @patch.object(CacheConfig, "_is_gpu_environment", return_value=True)
-    def test_for_environment_gpu(self, mock_gpu, mock_cloud, mock_hpc, mock_sysconf):
-        def sysconf_mock(name):
-            if name == "SC_PAGE_SIZE":
-                return 4096
-            if name == "SC_PHYS_PAGES":
-                return (32 * (1024**3)) // 4096
-            raise ValueError()
-
-        mock_sysconf.side_effect = sysconf_mock
-
-        config = CacheConfig.for_environment()
-        assert config.max_files == 200
-        assert config.max_memory_mb == int(32 * 1024 * 0.4)
-        assert config.disk_cache_gb == 30
-        assert config.prefetch_enabled is True
-
-    @patch("torchfits.cache.os.sysconf")
-    @patch.object(CacheConfig, "_is_hpc_environment", return_value=False)
-    @patch.object(CacheConfig, "_is_cloud_environment", return_value=False)
-    @patch.object(CacheConfig, "_is_gpu_environment", return_value=False)
-    def test_for_environment_default(
-        self, mock_gpu, mock_cloud, mock_hpc, mock_sysconf
-    ):
-        def sysconf_mock(name):
-            if name == "SC_PAGE_SIZE":
-                return 4096
-            if name == "SC_PHYS_PAGES":
-                return (8 * (1024**3)) // 4096
-            raise ValueError()
-
-        mock_sysconf.side_effect = sysconf_mock
-
-        config = CacheConfig.for_environment()
-        assert config.max_files == 100
-        assert config.max_memory_mb == min(2048, int(8 * 1024 * 0.1))
-        assert config.disk_cache_gb == 5
-        assert config.prefetch_enabled is False
-
-    @patch.dict(os.environ, {"SLURM_JOB_ID": "12345"})
-    def test_is_hpc_environment_true(self):
-        assert CacheConfig._is_hpc_environment() is True
-
-    @patch.dict(os.environ, clear=True)
-    def test_is_hpc_environment_false(self):
-        assert CacheConfig._is_hpc_environment() is False
-
-    @patch.dict(os.environ, {"AWS_EXECUTION_ENV": "AWS_Lambda"})
-    def test_is_cloud_environment_true(self):
-        assert CacheConfig._is_cloud_environment() is True
-
-    @patch.dict(os.environ, clear=True)
-    def test_is_cloud_environment_false(self):
-        assert CacheConfig._is_cloud_environment() is False
-
-    @patch("torch.cuda.is_available", return_value=True)
-    @patch("torch.cuda.device_count", return_value=1)
-    def test_is_gpu_environment_true(self, mock_count, mock_available):
-        assert CacheConfig._is_gpu_environment() is True
-
-    @patch("torch.cuda.is_available", return_value=False)
-    def test_is_gpu_environment_false_not_available(self, mock_available):
-        assert CacheConfig._is_gpu_environment() is False
-
-    @patch("torch.cuda.is_available", return_value=True)
-    @patch("torch.cuda.device_count", return_value=0)
-    def test_is_gpu_environment_false_no_devices(self, mock_count, mock_available):
-        assert CacheConfig._is_gpu_environment() is False
-
-
-class TestCacheOptimization:
-    """Test CacheOptimization functionality."""
-
-    def test_optimize_for_dataset_small(self):
-        # Create a test configuration
-        config = CacheConfig(disk_cache_gb=10)
-        manager = torchfits.cache.CacheManager(config)
-
-        # Mock get_cache_manager to return our specific manager
-        with patch("torchfits.cache.get_cache_manager", return_value=manager):
-            # Test a small dataset that fits easily in cache
-            # 100 files, 10 MB each = ~1 GB total (< 10 GB limit)
-            file_paths = ["file_{}.fits".format(i) for i in range(100)]
-            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
-
-            # Verification
-            # Should enable aggressive caching for the entire dataset
-            assert manager.config.max_files == 100
-            assert manager.config.prefetch_enabled is True
-
-    def test_optimize_for_dataset_large(self):
-        # Create a test configuration
-        config = CacheConfig(disk_cache_gb=10)
-        manager = torchfits.cache.CacheManager(config)
-
-        # Mock get_cache_manager to return our specific manager
-        with patch("torchfits.cache.get_cache_manager", return_value=manager):
-            # Test a large dataset that exceeds cache limit
-            # 200 files, 100 MB each = ~19.5 GB total (> 10 GB limit)
-            file_paths = ["file_{}.fits".format(i) for i in range(200)]
-            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=100.0)
-
-            # Verification
-            # Should restrict max files to optimal_files
-            # optimal_files = int(10 * 1024 / 100) = 102
-            # min(102, 1000) = 102
-            assert manager.config.max_files == 102
-            # Deep-review unit 13, R2-058: this branch only mentions
-            # prefetch_enabled in a comment. Prefetching a dataset far larger
-            # than the disk cache is the opposite of what the branch is for, so
-            # the contract is that this branch leaves the knob alone -- asserted
-            # from a False starting value, since CacheConfig defaults it to
-            # True and starting there could not detect a forced True.
-            assert manager.config.prefetch_enabled is True, (
-                "CacheConfig defaults prefetch_enabled to True, so this test can "
-                "only prove the large branch does not touch it"
-            )
-
-    def test_optimize_for_dataset_large_leaves_prefetch_alone(self):
-        """The oversized-dataset branch must not turn prefetching on.
-
-        R2-058: ``test_optimize_for_dataset_large`` could not pin this because
-        its config starts from the default ``prefetch_enabled=True``. Forcing
-        ``True`` in the large branch was left green across test_cache.py and
-        test_stream_table_and_cache.py (71 passed).
-        """
-        config = CacheConfig(disk_cache_gb=10, prefetch_enabled=False)
-        manager = torchfits.cache.CacheManager(config)
-
-        with patch("torchfits.cache.get_cache_manager", return_value=manager):
-            file_paths = ["file_{}.fits".format(i) for i in range(200)]
-            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=100.0)
-
-            assert manager.config.max_files == 102
-            assert manager.config.prefetch_enabled is False, (
-                "a dataset larger than disk_cache_gb must not enable prefetch"
-            )
-
-    def test_optimize_for_dataset_small_enables_prefetch(self):
-        """The fitting branch is the one that turns prefetch on (R2-058).
-
-        Paired with the test above so the two branches cannot both be green for
-        the same reason: a mutant that simply stopped setting the flag at all
-        passes the large branch and fails this one.
-        """
-        config = CacheConfig(disk_cache_gb=10, prefetch_enabled=False)
-        manager = torchfits.cache.CacheManager(config)
-
-        with patch("torchfits.cache.get_cache_manager", return_value=manager):
-            file_paths = ["file_{}.fits".format(i) for i in range(100)]
-            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
-
-            assert manager.config.max_files == 100
-            assert manager.config.prefetch_enabled is True
-
-    def test_optimize_for_dataset_huge_many_files(self):
-        # Create a test configuration
-        config = CacheConfig(disk_cache_gb=100)
-        manager = torchfits.cache.CacheManager(config)
-
-        # Mock get_cache_manager to return our specific manager
-        with patch("torchfits.cache.get_cache_manager", return_value=manager):
-            # Test a very large number of files that exceeds cache limit
-            # optimal_files = int(100 * 1024 / 10) = 10240
-            # max_files is capped at 1000
-            file_paths = ["file_{}.fits".format(i) for i in range(20000)]
-            torchfits.cache.optimize_for_dataset(file_paths, avg_file_size_mb=10.0)
-
-            # Verification
-            assert manager.config.max_files == 1000
-
-
-class TestCacheManagerFunctions:
-    """Test cache manager module-level functions."""
-
-    def test_clear_cache(self):
-        from torchfits.cache import get_cache_manager, clear_cache, get_cache_stats
-
-        # The manager no longer keeps fake never-updated counters; hits/misses
-        # come straight from the I/O engine. Clearing must reset them.
-        manager = get_cache_manager()
+        path = tmp_path / "img.fits"
+        torchfits.write_tensor(str(path), torch.ones(4, 4), overwrite=True)
+        torchfits.read(str(path), return_header=True, cache_capacity=8)
+        torchfits.read(str(path), return_header=True, cache_capacity=8)
+        assert get_cache_stats()["total_requests"] > 0
         clear_cache()
-        stats_before = get_cache_stats()
-        assert stats_before["hits"] == 0
-        assert stats_before["misses"] == 0
-        assert not hasattr(manager, "_stats")
+        stats = get_cache_stats()
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
 
 
 def test_cached_reads_are_isolated_from_caller_mutation(tmp_path):
@@ -797,57 +527,28 @@ def test_cached_reads_are_isolated_from_caller_mutation(tmp_path):
     assert torch.equal(torchfits.read(image_path.as_posix()), torch.ones(4, 4))
 
 
-class TestDeprecatedNoOpContract:
-    """Option-A cache no-ops must warn only on explicit user calls.
+class TestRemovedCachePolicyObjects:
+    """1.3.1 removed the cache-policy objects instead of keeping no-ops.
 
-    Regression (r1a-01): ``get_cache_manager`` / ``configure_for_environment``
-    / ``optimize_for_dataset`` invoked the deprecated ``configure_cpp_cache``
-    no-op internally, so every process's first ``torchfits`` I/O call emitted a
-    ``DeprecationWarning`` — raised as an error under the common
-    ``-W error::DeprecationWarning`` / pytest ``filterwarnings = error``
-    configurations.
+    torchfits' changelog (1.3.1rc2, Removed): "Remove ineffective cache-policy
+    configuration". Pin that they stay gone, so a stale caller fails loudly
+    instead of configuring nothing.
     """
 
-    def test_configure_for_environment_emits_no_deprecation(self):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            torchfits.cache.configure_for_environment()
-        dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert dep == []
-
-    def test_get_cache_manager_creation_emits_no_deprecation(self, monkeypatch):
-        monkeypatch.setattr(torchfits.cache, "_cache_manager", None)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            manager = torchfits.cache.get_cache_manager()
-        assert isinstance(manager, torchfits.cache.CacheManager)
-        dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert dep == []
-
-    def test_optimize_for_dataset_emits_no_deprecation(self, monkeypatch):
-        manager = torchfits.cache.CacheManager(CacheConfig(disk_cache_gb=10))
-        monkeypatch.setattr(torchfits.cache, "get_cache_manager", lambda: manager)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            torchfits.cache.optimize_for_dataset(["a.fits", "b.fits"], 1.0)
-        dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert dep == []
-
-    def test_removed_cache_knobs_are_gone(self):
-        """1.3.0 removed the deprecated no-ops instead of warning forever."""
-        assert not hasattr(torchfits.cache, "configure_cache")
-        assert not hasattr(torchfits.cache.CacheManager, "configure_cpp_cache")
-
-    def test_removed_noop_cannot_replace_the_cache_manager(self):
-        """``configure_cache`` used to swap the global manager for phantom-knob
-        config and race ``get_cache_manager``'s lock-free read side. With the
-        knob gone, the manager and its config must stay untouched."""
-        manager = torchfits.cache.get_cache_manager()
-        stats_before = torchfits.cache.get_cache_stats()["config"]
-        with pytest.raises(AttributeError):
-            torchfits.cache.configure_cache(7, 8, 9)
-        assert torchfits.cache.get_cache_manager() is manager
-        assert torchfits.cache.get_cache_stats()["config"] == stats_before
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "CacheConfig",
+            "CacheManager",
+            "get_cache_manager",
+            "configure_for_environment",
+            "optimize_for_dataset",
+            "get_optimal_cache_config",
+            "configure_cache",
+        ],
+    )
+    def test_policy_object_is_gone(self, name):
+        assert not hasattr(torchfits.cache, name)
 
     def test_cache_stats_surface_engine_errors(self, monkeypatch):
         """Stats aggregation must not silently swallow engine failures."""
@@ -859,8 +560,6 @@ class TestDeprecatedNoOpContract:
         monkeypatch.setattr(caches, "get_cache_performance", boom)
         with pytest.raises(RuntimeError, match="engine broken"):
             torchfits.cache.get_cache_stats()
-        with pytest.raises(RuntimeError, match="engine broken"):
-            torchfits.cache.stats()
 
 
 if __name__ == "__main__":
@@ -996,9 +695,8 @@ def test_each_subsystem_enables_exactly_its_own_flags(name, expected):
 
     flags = cache_subsystem_policy(name)
     assert _enabled(flags) == expected, flags
-    # `handles` is never enabled: the handle cache was removed, and
-    # `clear_cache_subsystem` deliberately does not forward it.
-    assert flags["handles"] is False
+    # The handle cache was removed, so the policy no longer names it.
+    assert "handles" not in flags
 
 
 def test_all_subsystem_enables_every_flag():
@@ -1006,7 +704,7 @@ def test_all_subsystem_enables_every_flag():
 
     flags = cache_subsystem_policy("all")
     assert all(flags.values()), flags
-    assert set(flags) == {"data", "handles", "meta", "hdu_types", "stats", "cpp"}
+    assert set(flags) == {"data", "meta", "hdu_types", "stats", "cpp"}
 
 
 def test_policy_returns_a_copy_not_the_shared_table():

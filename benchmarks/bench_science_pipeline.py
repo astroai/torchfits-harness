@@ -153,7 +153,7 @@ def _ap_coadd_write(stack: np.ndarray, out_path: str) -> int:
 def _tf_serve(cutouts: list[Any], batch_size: int, transform: Any) -> int:
     ds = torchfits.data.FitsCutoutDataset(cutouts, transform=transform)
     loader = torchfits.data.make_loader(
-        ds, batch_size=batch_size, shuffle=False, num_workers=0, optimize_cache=False
+        ds, batch_size=batch_size, shuffle=False, num_workers=0
     )
     return sum(int(batch.shape[0]) for batch in loader)
 

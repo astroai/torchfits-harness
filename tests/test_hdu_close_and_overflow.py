@@ -301,14 +301,23 @@ def test_prefetch_error_surfaces_on_resolve(tmp_path, monkeypatch):
         remote_mod.resolve_local_path(url, cache_dir=tmp_path)
 
 
-def test_mutation_barrier_does_not_clear_global_cache():
-    from torchfits._table import _mutation_coerce as coerce_mod
+def test_mutation_barrier_does_not_clear_global_cache(tmp_path):
+    """Editing one table invalidates that path only; other files stay cached."""
+    import torchfits
 
-    with mock.patch.object(coerce_mod, "_invalidate_path_caches") as inv:
-        with mock.patch("torchfits.cache.clear") as clear:
-            coerce_mod._mutation_cache_barrier("/tmp/a.fits")
-    inv.assert_called_once_with("/tmp/a.fits")
-    clear.assert_not_called()
+    image = str(tmp_path / "a.fits")
+    table = str(tmp_path / "b.fits")
+    torchfits.write_tensor(image, torch.ones(4, 4), overwrite=True)
+    torchfits.write(table, {"X": torch.arange(3, dtype=torch.int32)}, overwrite=True)
+    torchfits.clear_file_cache()
+    torchfits.read(image, return_header=True, cache_capacity=8)
+    assert torchfits.get_cache_performance()["cache_size"] == 1
+
+    torchfits.table.append_rows(table, {"X": [7]}, hdu=1)
+    assert torchfits.get_cache_performance()["cache_size"] == 1
+
+    torchfits.read(image, return_header=True, cache_capacity=8)
+    assert torchfits.get_cache_performance()["hits"] == 1
 
 
 def test_tensor_hdu_data_after_close_raises_typed_error():

@@ -132,25 +132,13 @@ def test_table_hdu_ref_delete_rows_file_updates_the_file(tmp_path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_get_optimal_cache_config_describes_the_environment() -> None:
-    config = cache.get_optimal_cache_config()
-    assert set(config) == {
-        "max_files",
-        "max_memory_mb",
-        "disk_cache_gb",
-        "prefetch_enabled",
-        "environment",
-    }
-    assert config["max_files"] > 0
-    assert config["max_memory_mb"] > 0
-    assert isinstance(config["prefetch_enabled"], bool)
-
-
-def test_cache_manager_get_stats_reports_counters() -> None:
-    manager = cache.CacheManager()
-    stats = manager.get_stats()
-    assert {"hits", "misses", "hit_rate", "config", "cpp_cache_size"} <= set(stats)
-    assert 0.0 <= stats["hit_rate"] <= 1.0
+def test_cache_roots_live_under_the_cache_root(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("TORCHFITS_REMOTE_CACHE", raising=False)
+    monkeypatch.delenv("TORCHFITS_SAMPLE_CACHE", raising=False)
+    monkeypatch.setenv("TORCHFITS_CACHE_DIR", str(tmp_path))
+    assert cache.cache_root() == tmp_path
+    assert cache.remote_cache_root().parent == tmp_path
+    assert cache.sample_cache_root().parent == tmp_path
 
 
 # --------------------------------------------------------------------------
@@ -317,9 +305,3 @@ def test_where_columns_from_ast_lists_each_column_once() -> None:
     assert where.where_columns_from_ast(tree) == ["A", "B"]
     with pytest.raises(ValueError):
         where.where_columns_from_ast(("nonsense",))
-
-
-def test_where_identifier_re_matches_plain_column_names() -> None:
-    assert where.where_identifier_re.match("FLUX_1") is not None
-    assert where.where_identifier_re.match("1FLUX") is None
-    assert where.where_identifier_re.match("FLUX-BAND") is None

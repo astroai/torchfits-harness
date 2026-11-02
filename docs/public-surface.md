@@ -10,15 +10,15 @@ installed wheel or a symbol appears in no test.
 | `torchfits` | 38 | 38 |
 | `torchfits.Card` | 1 | 1 |
 | `torchfits.HDUList` | 6 | 6 |
-| `torchfits.Header` | 15 | 15 |
+| `torchfits.Header` | 16 | 16 |
 | `torchfits.TableHDU` | 23 | 23 |
-| `torchfits.TableHDURef` | 26 | 26 |
+| `torchfits.TableHDURef` | 27 | 27 |
 | `torchfits.TensorHDU` | 7 | 7 |
-| `torchfits.cache` | 19 | 19 |
+| `torchfits.cache` | 3 | 3 |
 | `torchfits.data` | 21 | 21 |
-| `torchfits.hdu` | 90 | 90 |
+| `torchfits.hdu` | 89 | 89 |
 | `torchfits.table` | 32 | 32 |
 | `torchfits.transforms` | 100 | 100 |
-| `torchfits.where` | 7 | 7 |
+| `torchfits.where` | 6 | 6 |
 
-**Total: 385 symbols, 0 unexercised.**
+**Total: 369 symbols, 0 unexercised.**

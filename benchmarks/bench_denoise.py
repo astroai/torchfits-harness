@@ -177,7 +177,6 @@ def _tf_train_epoch(spec: dict[str, Any], net: nn.Module, batch_size: int) -> in
         batch_size=batch_size,
         shuffle=True,
         num_workers=0,
-        optimize_cache=False,
     )
     optim = torch.optim.Adam(net.parameters(), lr=_LR)
     steps = 0
@@ -263,7 +262,6 @@ def _tf_eval_cr(spec: dict[str, Any], net: nn.Module) -> dict[str, float]:
         batch_size=_BATCH,
         shuffle=False,
         num_workers=0,
-        optimize_cache=False,
     )
     with torch.no_grad():
         before = 0.0

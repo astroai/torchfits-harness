@@ -15,7 +15,7 @@ from torchfits.cache import CACHE_ENV_SENTINELS  # noqa: E402
 
 
 # Several CACHE_ENV_SENTINELS (KUBERNETES_SERVICE_HOST, K_SERVICE, WEBSITE_SITE_NAME, ...)
-# leak into dev sandboxes and shared CI pods, where CacheConfig auto-detection would
+# leak into dev sandboxes and shared CI pods, where torchfits environment detection would
 # otherwise mis-classify the env as "cloud" / "hpc". The autouse fixture below clears the
 # FULL allowlist (single source of truth: CACHE_ENV_SENTINELS imported above from
 # torchfits.cache) before every test so each test starts from a clean env and can opt
