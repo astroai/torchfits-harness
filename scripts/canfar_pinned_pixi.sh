@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Put a pixi that satisfies this repository's `requires-pixi` pin on PATH.
+# Put a pixi that satisfies an exact `requires-pixi = "==X.Y.Z"` pin on PATH.
 #
-# astroai/base ships whatever pixi was current when the image was built, while
-# pixi.toml pins one exact release, so `pixi install` otherwise aborts with
-# "this project requires pixi '==0.82.0', but you have pixi 0.83.0" before any
-# work happens. The image's pixi lives in a read-only prefix, so the pinned
-# release is downloaded into $SCRATCH and prepended to PATH instead of calling
-# `pixi self-update`.
+# pixi.toml carries no such pin today, so use_pinned_pixi returns at once and
+# the image's own pixi is used. If an exact pin is ever added: astroai/base
+# ships whatever pixi was current when the image was built, so `pixi install`
+# would abort with "this project requires pixi '==X', but you have pixi Y"; the
+# image's pixi lives in a read-only prefix, so the pinned release is downloaded
+# into $SCRATCH and prepended to PATH instead of calling `pixi self-update`.
 #
 # Sourced by canfar_verify_incontainer.sh and canfar_gpu_bench_incontainer.sh
 # from the repository root; the caller sets SCRATCH.
