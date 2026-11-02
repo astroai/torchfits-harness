@@ -410,7 +410,7 @@ def _as_array(result: Any) -> np.ndarray:
     return np.asarray(result)
 
 
-def _values_differ(got: np.ndarray, ref: np.ndarray) -> str | None:
+def values_differ(got: np.ndarray, ref: np.ndarray) -> str | None:
     """Why two decoded arrays disagree, or ``None`` when they agree."""
     got = np.asarray(got)
     ref = np.asarray(ref)
@@ -451,11 +451,11 @@ def _disagreement(case: Case, result: Any, reference: Any) -> str | None:
         if set(got) != set(ref):
             return f"columns {sorted(set(got) ^ set(ref))} differ"
         for name in ref:
-            why = _values_differ(got[name], ref[name])
+            why = values_differ(got[name], ref[name])
             if why is not None:
                 return f"column {name}: {why}"
         return None
-    return _values_differ(_as_array(result), _as_array(reference))
+    return values_differ(_as_array(result), _as_array(reference))
 
 
 def check_agreement(case: Case, methods: dict[str, Callable[[], Any]]) -> dict[str, str]:

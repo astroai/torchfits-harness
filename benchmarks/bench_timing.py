@@ -176,11 +176,14 @@ def time_medians_interleaved(
     runs: int,
     warmup: int,
     sync_device: str | None = "auto",
+    samples_out: dict[str, list[float]] | None = None,
 ) -> dict[str, tuple[float | None, float | None, float | None, str | None]]:
     """Round-robin timing; returns name -> (median_s, peak_rss_mb, peak_cuda_mb, err).
 
     ``sync_device='auto'`` synchronizes CUDA/MPS after every call; the
     interleaving shuffle uses a fixed seed so runs are reproducible (M16).
+    ``samples_out``, when given, receives every timed sample per method for
+    callers that report a spread as well as the median.
     """
     if sync_device == "auto":
         sync_device = _auto_sync_device(lambda: None)
@@ -248,6 +251,8 @@ def time_medians_interleaved(
         if cu is not None:
             cuda_peaks[name].append(cu)
 
+    if samples_out is not None:
+        samples_out.update({name: list(samples[name]) for name in names})
     out: dict[str, tuple[float | None, float | None, float | None, str | None]] = {}
     for name in names:
         if errors[name] is not None or not samples[name]:

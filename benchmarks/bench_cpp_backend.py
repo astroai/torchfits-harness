@@ -14,6 +14,8 @@ repo_root = str(Path(__file__).resolve().parent.parent)
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
+from benchmarks.bench_corpus import values_differ  # noqa: E402
+from benchmarks.bench_timing import time_medians_interleaved  # noqa: E402
 from benchmarks.config import DEFAULT_OUTPUT_DIR  # noqa: E402
 
 import argparse  # noqa: E402
@@ -21,7 +23,6 @@ import json  # noqa: E402
 import random  # noqa: E402
 import sys  # noqa: E402
 import tempfile  # noqa: E402
-import time  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any, Callable, Dict, List, Optional  # noqa: E402
 
@@ -110,17 +111,9 @@ class CPPBackendBenchmark:
             hdu.writeto(f.name, overwrite=True)
             return f.name
 
-    def _time_callable(self, func: Callable[[], Any]) -> Dict[str, float]:
-        """Robust timing with warmup and median/percentile stats."""
-        for _ in range(self.warmup):
-            _ = func()
-
-        samples: List[float] = []
-        for _ in range(self.runs):
-            t0 = time.perf_counter()
-            _ = func()
-            samples.append(time.perf_counter() - t0)
-
+    @staticmethod
+    def _stats(samples: List[float]) -> Dict[str, float]:
+        """Median/percentile summary of one method's timed samples."""
         arr = np.array(samples, dtype=np.float64)
         p10 = float(np.percentile(arr, 10))
         p90 = float(np.percentile(arr, 90))
@@ -138,6 +131,53 @@ class CPPBackendBenchmark:
             "spread_s": spread,
             "rel_spread": rel_spread,
         }
+
+    def _time_interleaved(
+        self, methods: Dict[str, Callable[[], Any]]
+    ) -> Dict[str, Dict[str, float]]:
+        """Round-robin timing (shared with the other suites), then stats.
+
+        Timing one reader to completion before the next lets page-cache and
+        thermal drift land on whichever runs last; interleaving spreads it.
+        """
+        samples: Dict[str, List[float]] = {}
+        timed = time_medians_interleaved(
+            methods, runs=self.runs, warmup=self.warmup, samples_out=samples
+        )
+        out: Dict[str, Dict[str, float]] = {}
+        for name, (_median, _rss, _cuda, err) in timed.items():
+            if err is not None:
+                print(f"  {name}: failed - {err}")
+                continue
+            out[name] = self._stats(samples[name])
+        return out
+
+    @staticmethod
+    def _disagreements(
+        methods: Dict[str, Callable[[], Any]], reference: str
+    ) -> Dict[str, str]:
+        """Run each reader once; name the ones whose pixels differ from ``reference``.
+
+        A speed ratio between readers that return different values is not a
+        comparison, so those readers are reported and left out of the timing.
+        """
+        def as_array(value: Any) -> np.ndarray:
+            if isinstance(value, torch.Tensor):
+                return value.detach().cpu().numpy()
+            return np.asarray(value)
+
+        expected = as_array(methods[reference]())
+        out: Dict[str, str] = {}
+        for name, fn in methods.items():
+            if name == reference:
+                continue
+            try:
+                why = values_differ(as_array(fn()), expected)
+            except Exception as exc:  # noqa: BLE001 - reported, not fatal
+                why = f"{type(exc).__name__}: {exc}"
+            if why is not None:
+                out[name] = why
+        return out
 
     def _case_label(
         self, shape: tuple[int, int], dtype: np.dtype, compressed: bool, scaled: bool
@@ -174,8 +214,8 @@ class CPPBackendBenchmark:
         }
 
         try:
+            methods: Dict[str, Callable[[], Any]] = {}
             if torchfits:
-                tf_last = {"tensor_shape": None, "tensor_dtype": None}
 
                 def read_torchfits() -> torch.Tensor:
                     # High-level comparison path. Caches are DISABLED to match
@@ -183,15 +223,7 @@ class CPPBackendBenchmark:
                     # cached torchfits read against uncached peers inflated
                     # rankings (M16).
                     out = torchfits.read(filepath, hdu=hdu, use_cache=False)
-                    tensor = out[0] if isinstance(out, tuple) else out
-                    tf_last["tensor_shape"] = list(tensor.shape)
-                    tf_last["tensor_dtype"] = str(tensor.dtype)
-                    return tensor
-
-                tf_stats = self._time_callable(read_torchfits)
-                result.update({f"torchfits_{k}": v for k, v in tf_stats.items()})
-                result["torchfits_shape"] = tf_last["tensor_shape"]
-                result["torchfits_dtype"] = tf_last["tensor_dtype"]
+                    return out[0] if isinstance(out, tuple) else out
 
                 def read_torchfits_specialized() -> torch.Tensor:
                     # Direct/specialized tensor path.
@@ -201,10 +233,8 @@ class CPPBackendBenchmark:
                         mmap=(not compressed),
                     )
 
-                tf_spec_stats = self._time_callable(read_torchfits_specialized)
-                result.update(
-                    {f"torchfits_specialized_{k}": v for k, v in tf_spec_stats.items()}
-                )
+                methods["torchfits"] = read_torchfits
+                methods["torchfits_specialized"] = read_torchfits_specialized
 
             if astropy_fits:
 
@@ -220,9 +250,6 @@ class CPPBackendBenchmark:
                             np.ascontiguousarray(_to_native_endian(array))
                         )
 
-                ast_stats = self._time_callable(read_astropy)
-                result.update({f"astropy_{k}": v for k, v in ast_stats.items()})
-
                 def read_astropy_specialized() -> np.ndarray:
                     with astropy_fits.open(filepath) as hdul:
                         array = hdul[hdu].data
@@ -230,10 +257,8 @@ class CPPBackendBenchmark:
                             raise RuntimeError("astropy returned no data")
                         return _to_native_endian(array)
 
-                ast_spec_stats = self._time_callable(read_astropy_specialized)
-                result.update(
-                    {f"astropy_specialized_{k}": v for k, v in ast_spec_stats.items()}
-                )
+                methods["astropy"] = read_astropy
+                methods["astropy_specialized"] = read_astropy_specialized
 
             if fitsio:
 
@@ -241,16 +266,25 @@ class CPPBackendBenchmark:
                     array = fitsio.read(filepath, ext=hdu)
                     return torch.from_numpy(_to_native_endian(array))
 
-                fi_stats = self._time_callable(read_fitsio)
-                result.update({f"fitsio_{k}": v for k, v in fi_stats.items()})
-
                 def read_fitsio_specialized() -> np.ndarray:
                     return _to_native_endian(fitsio.read(filepath, ext=hdu))
 
-                fi_spec_stats = self._time_callable(read_fitsio_specialized)
-                result.update(
-                    {f"fitsio_specialized_{k}": v for k, v in fi_spec_stats.items()}
-                )
+                methods["fitsio"] = read_fitsio
+                methods["fitsio_specialized"] = read_fitsio_specialized
+
+            if "torchfits" in methods:
+                tensor = methods["torchfits"]()
+                result["torchfits_shape"] = list(tensor.shape)
+                result["torchfits_dtype"] = str(tensor.dtype)
+                mismatched = self._disagreements(methods, "torchfits")
+                if mismatched:
+                    result["mismatch"] = mismatched
+                    for name, why in mismatched.items():
+                        print(f"  {name}: MISMATCH vs torchfits ({why}); not timed")
+                        methods.pop(name)
+
+            for name, stats in self._time_interleaved(methods).items():
+                result.update({f"{name}_{k}": v for k, v in stats.items()})
 
             if "torchfits_median_s" in result and "astropy_median_s" in result:
                 result["vs_astropy_median"] = (
@@ -363,18 +397,14 @@ class CPPBackendBenchmark:
         cutout_spec = f"{filepath}[0][1000:2000,1000:2000]"
 
         try:
+            methods: Dict[str, Callable[[], Any]] = {}
             if torchfits:
 
                 def tf_cutout() -> torch.Tensor:
                     out = torchfits.read(cutout_spec)
                     return out[0] if isinstance(out, tuple) else out
 
-                tf_stats = self._time_callable(tf_cutout)
-                print(
-                    "  torchfits cutout: "
-                    f"median={tf_stats['median_s'] * 1000:.2f}ms "
-                    f"(spread={tf_stats['spread_s'] * 1000:.2f}ms)"
-                )
+                methods["torchfits"] = tf_cutout
 
             if astropy_fits:
 
@@ -384,11 +414,24 @@ class CPPBackendBenchmark:
                         subset = arr[1000:2000, 1000:2000]
                         return torch.from_numpy(_to_native_endian(subset))
 
-                ast_stats = self._time_callable(astropy_cutout)
+                methods["astropy"] = astropy_cutout
+
+            if "torchfits" in methods:
+                for name, why in self._disagreements(methods, "torchfits").items():
+                    print(f"  {name} cutout: MISMATCH vs torchfits ({why}); not timed")
+                    methods.pop(name)
+            stats = self._time_interleaved(methods)
+            if "torchfits" in stats:
+                print(
+                    "  torchfits cutout: "
+                    f"median={stats['torchfits']['median_s'] * 1000:.2f}ms "
+                    f"(spread={stats['torchfits']['spread_s'] * 1000:.2f}ms)"
+                )
+            if "astropy" in stats:
                 print(
                     "  astropy full+slice: "
-                    f"median={ast_stats['median_s'] * 1000:.2f}ms "
-                    f"(spread={ast_stats['spread_s'] * 1000:.2f}ms)"
+                    f"median={stats['astropy']['median_s'] * 1000:.2f}ms "
+                    f"(spread={stats['astropy']['spread_s'] * 1000:.2f}ms)"
                 )
         finally:
             os.unlink(filepath)
