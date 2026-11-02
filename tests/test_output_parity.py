@@ -326,14 +326,28 @@ def test_write_longstr_roundtrip_fitsio(parity_dir) -> None:
     assert header["LONGCARD"] == long_value
 
 
-def test_write_uint64_rejected(parity_dir) -> None:
-    path = parity_dir / "tw_uint64.fits"
-    with pytest.raises(ValueError):
-        torchfits.write(str(path), np.zeros((4,), dtype=np.uint64), overwrite=True)
-    with pytest.raises(ValueError):
-        torchfits.table.write(
-            str(path), {"U": np.zeros((4,), dtype=np.uint64)}, overwrite=True
-        )
+def test_write_uint64_roundtrip_fitsio(parity_dir) -> None:
+    """uint64 uses the BZERO/TZERO = 2**63 convention (torchfits 1.3.1+)."""
+    values = np.array([0, 1, 2**63, 2**64 - 1], dtype=np.uint64)
+    image = parity_dir / "tw_uint64.fits"
+    torchfits.write(str(image), values, overwrite=True)
+    header = fitsio.read_header(str(image), ext=0)
+    assert header["BITPIX"] == 64
+    assert header["BZERO"] == 2**63
+    # fitsio cannot read any uint64 image (astropy's own included: CFITSIO
+    # status 412), so astropy is the image oracle.
+    got = astropy_fits.getdata(str(image))
+    assert got.dtype.kind == "u" and got.dtype.itemsize == 8
+    np.testing.assert_array_equal(got, values)
+
+    table = parity_dir / "tw_uint64_table.fits"
+    torchfits.table.write(str(table), {"U": values}, overwrite=True)
+    header = fitsio.read_header(str(table), ext=1)
+    assert header["TFORM1"] == "K"
+    assert header["TZERO1"] == 2**63
+    got = fitsio.read(str(table), ext=1)["U"]
+    assert got.dtype.kind == "u" and got.dtype.itemsize == 8
+    np.testing.assert_array_equal(got, values)
 
 
 def test_write_table_quantize_roundtrip_fitsio(parity_dir) -> None:

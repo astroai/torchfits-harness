@@ -120,21 +120,21 @@ def test_unsigned_image_convention_roundtrip_exact(tmp_path, torch_dtype, mmap):
 
 
 def test_uint64_image_bzero_2_63_is_detected(tmp_path):
-    """LONGLONG BZERO=2**63 images must be detected as scaled (not read as raw
-    int64 garbage); they come back as float32 per the documented contract."""
+    """LONGLONG BZERO=2**63 images are the uint64 convention: they must read
+    back as exact ``uint64`` (torchfits 1.3.1+, like astropy and fitsio), not
+    as raw int64 garbage or a rounded float."""
     from astropy.io import fits
 
-    data = np.array([0, 1, 2**20, 2**40, 2**63 - 1], dtype=np.uint64).reshape(1, 5)
+    data = np.array([0, 1, 2**20, 2**40, 2**63 - 1, 2**64 - 1], dtype=np.uint64)
+    data = data.reshape(1, 6)
     path = str(tmp_path / "u64.fits")
     fits.HDUList([fits.PrimaryHDU(data)]).writeto(path, overwrite=True)
 
     out = torchfits.read(path)
-    # Scaled LONGLONG accumulates in float64. 2**40 is exact there and was
-    # not in float32; 2**63-1 is the nearest float64, not the integer.
-    assert out.dtype == torch.float64
-    np.testing.assert_array_equal(out.numpy(), data.astype(np.float64))
+    assert out.dtype == torch.uint64
+    np.testing.assert_array_equal(out.numpy(), data)
     with torchfits.open(path) as hdul:
-        assert hdul[0].data.dtype == torch.float64
+        assert hdul[0].data.dtype == torch.uint64
 
 
 # ---------------------------------------------------------------------------
@@ -266,14 +266,14 @@ TABLE_COLUMNS = {
 
 
 def _assert_column_faithful(got: torch.Tensor, want: np.ndarray) -> None:
-    """Exact value comparison; int8 is stored as TBYTE and returns as uint8."""
+    """Exact value and dtype comparison.
+
+    int8 is stored with the signed-byte convention (TFORM ``B``, TZERO -128)
+    and reads back as int8 since torchfits 1.3.1.
+    """
     want_t = torch.as_tensor(want)
-    if want.dtype == np.int8:
-        assert got.dtype == torch.uint8
-        assert torch.equal(got.view(torch.int8), want_t)
-    else:
-        assert got.dtype == want_t.dtype
-        assert torch.equal(got, want_t)
+    assert got.dtype == want_t.dtype
+    assert torch.equal(got, want_t)
 
 
 def test_table_write_roundtrip_dtype_matrix(tmp_path):
@@ -294,10 +294,10 @@ def test_table_write_roundtrip_dtype_matrix(tmp_path):
     with fits.open(path) as hdul:
         for name, want in TABLE_COLUMNS.items():
             actual = np.asarray(hdul[1].data[name])
-            if want.dtype == np.int8:
-                # int8 is stored as TBYTE; astropy sees the raw unsigned bytes.
-                assert actual.dtype == np.uint8
-                actual = actual.view(np.int8)
+            # astropy decodes a TZERO = -128 byte column as scaled float64;
+            # every other dtype keeps its integer/bool kind.
+            if want.dtype != np.int8:
+                assert actual.dtype.newbyteorder("=") == want.dtype, name
             np.testing.assert_array_equal(actual, want, err_msg=f"astropy col {name}")
 
 
@@ -765,8 +765,8 @@ def test_chunked_read_large_uint16_exact(tmp_path):
 
 
 def test_table_write_int8_column_tbyte_convention(tmp_path):
-    """int8 columns store as raw TBYTE on every write form (the signed view
-    recovers the values; astropy sees the raw unsigned bytes)."""
+    """int8 columns use the signed-byte convention (TFORM B, TZERO -128) on
+    every write form, so astropy and torchfits both read int8 values."""
     want = np.array([-128, -1, 0, 1, 127], dtype=np.int8)
     from astropy.io import fits
 
@@ -781,8 +781,10 @@ def test_table_write_int8_column_tbyte_convention(tmp_path):
         writer(path)
         with fits.open(path) as hdul:
             actual = np.asarray(hdul[1].data["I8"])
-        assert actual.dtype == np.uint8, label
-        np.testing.assert_array_equal(actual.view(np.int8), want, err_msg=label)
+            assert hdul[1].header["TFORM1"] == "B", label
+            assert hdul[1].header["TZERO1"] == -128, label
+        # astropy applies TZERO = -128 to a table column as a float scaling.
+        np.testing.assert_array_equal(actual, want.astype(np.float64), err_msg=label)
         _assert_column_faithful(torchfits.read(path, hdu=1)["I8"], want)
 
 
