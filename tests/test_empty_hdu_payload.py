@@ -22,6 +22,8 @@ from __future__ import annotations
 import hashlib
 import os
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -69,14 +71,12 @@ def test_delete_the_last_hdu_is_refused_and_the_file_survives(tmp_path, by):
     assert torchfits.read_num_hdus(path) == 1
 
 
-def test_delete_the_primary_from_a_two_hdu_file_still_works(tmp_path):
-    """Deleting down to exactly one HDU is legal and must keep the file valid.
+def test_delete_the_primary_from_a_two_hdu_file_is_refused(tmp_path):
+    """Deleting a primary whose successor is a table is refused, file untouched.
 
-    A file whose only HDU is a BINTABLE is not constructible through astropy
-    (it insists on a primary), so the interesting boundary is the other side:
-    a primary-plus-table file where the *primary* goes and the table remains.
-    The writer re-emits an empty primary for it, so the HDU count does not drop
-    -- what matters is that the table survives and the file still opens.
+    A table cannot be the primary HDU, and re-emitting an empty primary would
+    renumber nothing but still silently keep the HDU count; torchfits refuses
+    the edit instead (docs/api-core-io.md, "HDU Mutation").
     """
     path = str(tmp_path / "primary_table.fits")
     fits.HDUList(
@@ -87,8 +87,10 @@ def test_delete_the_primary_from_a_two_hdu_file_still_works(tmp_path):
             ),
         ]
     ).writeto(path)
-    write_api.delete_hdu(path, 0)
-    assert torchfits.read_num_hdus(path) == 2  # empty primary + the table
+    before = Path(path).read_bytes()
+    with pytest.raises(ValueError, match="cannot become the primary"):
+        torchfits.delete_hdu(path, 0)
+    assert Path(path).read_bytes() == before
     assert torchfits.read_colnames(path, 1) == ["A"]
     assert torchfits.read_nrows(path, 1) == 4
 
