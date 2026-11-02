@@ -19,6 +19,9 @@ MANIFEST = json.loads(corpus.MANIFEST_PATH.read_text(encoding="utf-8"))
 SOURCES = corpus.sources(tier="full")
 BY_ID = {source["id"]: source for source in SOURCES}
 
+# Reads only this repository; runs without a torchfits subject.
+pytestmark = pytest.mark.independent
+
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 

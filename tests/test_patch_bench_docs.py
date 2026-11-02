@@ -6,10 +6,15 @@ import csv
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import patch_bench_docs as pdoc  # noqa: E402
+
+# Reads only this repository; runs without a torchfits subject.
+pytestmark = pytest.mark.independent
 
 
 def _run_dir(base: Path, name: str, *, host: str, device: str | None) -> Path:

@@ -2,7 +2,12 @@
 
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+
+# Reads only this repository; runs without a torchfits subject.
+pytestmark = pytest.mark.independent
 
 
 def test_benchmarks_and_parity_docs_live_here() -> None:

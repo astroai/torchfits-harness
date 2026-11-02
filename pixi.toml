@@ -25,9 +25,12 @@ PYTHONNOUSERSITE = "1"
 
 [tasks]
 dev = "pip install -e . --no-deps"
-# Install a torchfits wheel, then this package. Pass the wheel path after --.
-subject = "pip install --no-deps"
-test = "pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q"
+# The subject under test. torchfits is deliberately not in the lock, so pixi
+# never pins it and never reverts it: install a wheel, path or pip spec with
+# `pixi run subject <wheel-or-spec>`, or build ../torchfits with subject-local.
+subject = "pip install --no-deps --force-reinstall"
+subject-local = "bash scripts/subject_local.sh"
+test ="pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q"
 bench-cpp = "python benchmarks/bench_cpp_backend.py"
 # Real-archive corpus: the CI tier is ~8 MB, the full tier ~16 GB.
 corpus-fetch = "python scripts/fetch_corpus.py --tier ci"
