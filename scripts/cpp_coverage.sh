@@ -80,6 +80,12 @@ if [[ $SKIP_BUILD -eq 0 ]]; then
         "$WHEELS"/*.whl
 fi
 
+# gcov accumulates into existing .gcda files, so counts from an earlier run (or
+# another test selection) would inflate this report. Start from zero.
+if [[ -d "$SOURCE/build" ]]; then
+    find "$SOURCE/build" -name '*.gcda' -delete
+fi
+
 echo "== running ${TESTS[*]}"
 set +e
 (cd "$ROOT" && "$VENV/bin/python" -m pytest "${TESTS[@]}" -q)
