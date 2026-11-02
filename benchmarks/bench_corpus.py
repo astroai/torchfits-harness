@@ -343,8 +343,12 @@ def _methods(case: Case) -> dict[str, Callable[[], Any]]:
             return astropy_fits.getdata(path, case.hdu, memmap=False)
         if case.operation == "read_rows":
             # memmap: slicing touches the requested rows, not the 6.7 GB file.
+            # A FITS_rec slice is lazy (scaling, nulls and strings convert on
+            # first column access), so materialize every column here; otherwise
+            # astropy is timed doing less work than the other readers.
             with astropy_fits.open(path, memmap=True) as hdul:
-                return hdul[case.hdu].data[: case.rows]
+                data = hdul[case.hdu].data[: case.rows]
+                return {name: np.array(data[name]) for name in data.columns.names}
         x0, y0, x1, y1 = case.window or (0, 0, WINDOW, WINDOW)
         # memmap only for unscaled HDUs: astropy refuses to memory-map an
         # image it has to rescale. A tile-compressed HDU decodes the tiles the
@@ -383,6 +387,100 @@ def _methods(case: Case) -> dict[str, Callable[[], Any]]:
     return methods
 
 
+def _arrow_column(column: Any) -> np.ndarray:
+    values = column.to_numpy(zero_copy_only=False)
+    if values.dtype == object and len(values) and isinstance(values[0], np.ndarray):
+        return np.stack(values)
+    return values
+
+
+def _as_columns(result: Any) -> dict[str, np.ndarray]:
+    """Table output of any reader as ``{upper-case name: ndarray}``."""
+    if hasattr(result, "column_names") and hasattr(result, "column"):  # pyarrow
+        return {name.upper(): _arrow_column(result[name]) for name in result.column_names}
+    if isinstance(result, dict):
+        return {str(name).upper(): np.asarray(v) for name, v in result.items()}
+    names = getattr(getattr(result, "dtype", None), "names", None) or ()
+    return {name.upper(): np.asarray(result[name]) for name in names}
+
+
+def _as_array(result: Any) -> np.ndarray:
+    if hasattr(result, "numpy") and hasattr(result, "detach"):  # torch tensor
+        return result.detach().cpu().numpy()
+    return np.asarray(result)
+
+
+def _values_differ(got: np.ndarray, ref: np.ndarray) -> str | None:
+    """Why two decoded arrays disagree, or ``None`` when they agree."""
+    got = np.asarray(got)
+    ref = np.asarray(ref)
+    if got.shape != ref.shape:
+        return f"shape {got.shape} != {ref.shape}"
+    if ref.dtype.kind in "SUO" or got.dtype.kind in "SUO":
+
+        def text(values: np.ndarray) -> list[str]:
+            return [
+                (v.decode("ascii", "replace") if isinstance(v, bytes) else str(v)).rstrip()
+                for v in values.ravel()
+            ]
+
+        return None if text(got) == text(ref) else "string values differ"
+    if ref.dtype.kind in "iub" and got.dtype.kind in "iub":
+        if np.array_equal(got.astype(object), ref.astype(object)):
+            return None
+        return "integer values differ"
+    a = got.astype(np.float64)
+    b = ref.astype(np.float64)
+    finite = np.isfinite(b)
+    scale = float(np.max(np.abs(b[finite]))) if finite.any() else 0.0
+    # Scaled images are rendered in float32 by astropy and float64 by
+    # torchfits; allow that rounding, nothing larger.
+    atol = 4 * float(np.finfo(np.float32).eps) * scale
+    if np.allclose(a, b, rtol=1e-6, atol=atol, equal_nan=True):
+        return None
+    return f"values differ (max |d| {float(np.nanmax(np.abs(a - b))):.3g})"
+
+
+def _disagreement(case: Case, result: Any, reference: Any) -> str | None:
+    """Compare one reader's output with torchfits' for the same case."""
+    if case.operation == "read_header":
+        return None  # three header objects; their cards are tested in parity
+    if case.operation == "read_rows":
+        got = _as_columns(result)
+        ref = _as_columns(reference)
+        if set(got) != set(ref):
+            return f"columns {sorted(set(got) ^ set(ref))} differ"
+        for name in ref:
+            why = _values_differ(got[name], ref[name])
+            if why is not None:
+                return f"column {name}: {why}"
+        return None
+    return _values_differ(_as_array(result), _as_array(reference))
+
+
+def check_agreement(case: Case, methods: dict[str, Callable[[], Any]]) -> dict[str, str]:
+    """Run every reader once; return ``{method: reason}`` for those that disagree.
+
+    A timing is only meaningful when the readers return the same values; one
+    that decodes less (or decodes wrongly) is flagged instead of ranked.
+    """
+    errors: dict[str, str] = {}
+    try:
+        reference = methods["torchfits"]()
+    except Exception:  # noqa: BLE001 - the timing pass reports it
+        return {}
+    for method, fn in methods.items():
+        if method == "torchfits":
+            continue
+        try:
+            why = _disagreement(case, fn(), reference)
+        except Exception:  # noqa: BLE001 - the timing pass reports it
+            continue
+        if why is not None:
+            errors[method] = f"mismatch vs torchfits: {why}"
+    return errors
+
+
 def _row(
     *,
     run_id: str,
@@ -393,7 +491,10 @@ def _row(
     peak_cuda_mb: float | None,
     err: str | None,
 ) -> dict[str, Any]:
-    status = "OK" if time_s is not None else "FAILED"
+    if err is not None and err.startswith("mismatch"):
+        status = "MISMATCH"
+    else:
+        status = "OK" if time_s is not None else "FAILED"
     library = method
     return {
         "run_id": run_id,
@@ -450,7 +551,14 @@ def run(
             f"runs={runs} size={case.size_mb:.1f}MB",
             flush=True,
         )
-        timed = time_medians_interleaved(methods, runs=runs, warmup=warmup)
+        mismatched = check_agreement(case, methods)
+        timed = time_medians_interleaved(
+            {name: fn for name, fn in methods.items() if name not in mismatched},
+            runs=runs,
+            warmup=warmup,
+        )
+        for method, reason in mismatched.items():
+            timed[method] = (None, None, None, reason)
         for method, (time_s, peak_rss, peak_cuda, err) in timed.items():
             if err is not None:
                 print(f"[corpus]   {method}: failed — {err}", flush=True)

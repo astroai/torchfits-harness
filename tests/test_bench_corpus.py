@@ -228,9 +228,54 @@ def test_tile_compressed_image_is_benchmarked_as_an_image(
         x0, y0, x1, y1 = data_case.window
         assert (x1 - x0, y1 - y0) == (80, 64)
 
+    mismatched = bench_corpus.check_agreement(data_case, bench_corpus._methods(data_case))
+    assert mismatched == {}
     for method, fn in bench_corpus._methods(data_case).items():
-        result = fn()
-        pixels = result.numpy() if hasattr(result, "numpy") else np.asarray(result)
+        pixels = bench_corpus._as_array(fn())
         assert pixels.shape == (64, 80), method
         assert float(pixels[0, 1]) == pytest.approx(102.0), method  # 2 * 1 + 100
 
+
+def test_astropy_rows_are_materialized(table_file: Path) -> None:
+    case = bench_corpus.Case(
+        case_id="t",
+        label="t",
+        operation="read_rows",
+        family="table",
+        path=table_file,
+        hdu=1,
+        kind="table",
+        size_mb=0.0,
+        n_points=2,
+        rows=2,
+    )
+    result = bench_corpus._methods(case)["astropy"]()
+    assert isinstance(result, dict)
+    assert all(type(column) is np.ndarray for column in result.values())
+    assert bench_corpus.check_agreement(case, bench_corpus._methods(case)) == {}
+
+
+def test_a_reader_that_disagrees_is_flagged_not_ranked(
+    monkeypatch: pytest.MonkeyPatch, image_file: Path, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(bench_corpus.corpus, "sources", lambda **_: [_source("img")])
+    monkeypatch.setattr(bench_corpus.corpus, "source_files", lambda source: [image_file])
+    monkeypatch.setattr(bench_corpus.corpus, "families", lambda source: ("image",))
+    real_methods = bench_corpus._methods
+
+    def lying_methods(case):
+        methods = real_methods(case)
+        if case.operation == "read_full":
+            methods["astropy"] = lambda: np.zeros((40, 50), dtype=np.float32)
+        return methods
+
+    monkeypatch.setattr(bench_corpus, "_methods", lying_methods)
+    rows, _ = bench_corpus.run(
+        tier="ci", limit=1, runs=1, warmup=0, run_id="test", output_dir=tmp_path
+    )
+    flagged = next(
+        row for row in rows if row["method"] == "astropy" and row["operation"] == "read_full"
+    )
+    assert flagged["status"] == "MISMATCH"
+    assert "mismatch" in flagged["skip_reason"]
+    assert flagged["time_s"] is None
