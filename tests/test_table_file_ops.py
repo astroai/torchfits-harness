@@ -1,5 +1,6 @@
 import os
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -550,22 +551,35 @@ def test_infer_fits_scalar_code_unsigned_dtype_raises_helpful_type_error(
     """uint16/32/64 have no native FITS TFORM; the error should say why and
 
     point at a fix (cast to signed, or use the BZERO unsigned write path)
-    instead of the opaque "Cannot infer FITS TFORM" message.
+    instead of the opaque "Cannot infer FITS TFORM" message. Exercised through
+    the public ``insert_column``, whose format inference raises it.
     """
-    from torchfits._table.mutation import _infer_fits_scalar_code
-
-    with pytest.raises(TypeError) as excinfo:
-        _infer_fits_scalar_code(np.array([1, 2], dtype=dtype))
-    message = str(excinfo.value)
-    assert "unsigned" in message.lower()
-    assert signed_name in message
-    assert "BZERO" in message
+    path = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
+    path.close()
+    try:
+        torchfits.table.write(path.name, {"A": np.arange(2, dtype=np.int32)}, overwrite=True)
+        before = Path(path.name).read_bytes()
+        with pytest.raises(TypeError) as excinfo:
+            torchfits.table.insert_column(path.name, "U", np.array([1, 2], dtype=dtype))
+        message = str(excinfo.value)
+        assert "unsigned" in message.lower()
+        assert signed_name in message
+        assert "BZERO" in message
+        assert Path(path.name).read_bytes() == before
+    finally:
+        os.unlink(path.name)
 
 
 def test_infer_fits_scalar_code_uint8_still_maps_to_b():
-    from torchfits._table.mutation import _infer_fits_scalar_code
-
-    assert _infer_fits_scalar_code(np.array([1, 2], dtype=np.uint8)) == "B"
+    path = tempfile.NamedTemporaryFile(suffix=".fits", delete=False)
+    path.close()
+    try:
+        torchfits.table.write(path.name, {"A": np.arange(2, dtype=np.int32)}, overwrite=True)
+        torchfits.table.insert_column(path.name, "U", np.array([1, 255], dtype=np.uint8))
+        assert torchfits.read_header(path.name, 1)["TFORM2"] in ("B", "1B")
+        assert torchfits.read(path.name, hdu=1)["U"].tolist() == [1, 255]
+    finally:
+        os.unlink(path.name)
 
 
 def test_table_write_noncontiguous_numeric_roundtrip():

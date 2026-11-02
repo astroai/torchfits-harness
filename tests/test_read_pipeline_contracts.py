@@ -13,8 +13,7 @@ import pytest
 import torch
 
 import torchfits
-from torchfits import io
-from torchfits._io_engine import _read_pipeline, _read_pipeline_fallback
+from torchfits._io_engine import _read_pipeline_fallback
 
 
 def test_read_hdus_short_batch_result_raises_naming_path(tmp_path):
@@ -29,52 +28,32 @@ def test_read_hdus_short_batch_result_raises_naming_path(tmp_path):
             torchfits.read_hdus(path, [0, 0], mmap=True)
 
 
-def test_read_batch_hdus_short_batch_result_falls_back_per_hdu():
-    """read(path, hdu=[...]) must not return fewer tensors than hdus (r4a-01)."""
-    cpp = mock.Mock()
-    cpp.read_hdus_batch.return_value = [torch.zeros(2, 2)]  # 2 hdus, 1 result
-    logger = mock.Mock()
-    calls = []
+@pytest.mark.parametrize("mmap", [True, False])
+def test_read_batch_hdus_short_batch_result_falls_back_per_hdu(tmp_path, mmap):
+    """read(path, hdu=[...]) must not return fewer tensors than hdus (r4a-01).
 
-    def fake_unified(**kwargs):
-        calls.append(kwargs["hdu"])
-        return torch.full((2, 2), float(len(calls)))
+    Only the native batch call is faked (one result for two HDUs); the public
+    read must fall back per HDU and return each HDU's own pixels, in order --
+    a permutation is the failure this contract exists to prevent (R2-052).
+    """
+    import torchfits._C as native
 
-    with mock.patch.object(_read_pipeline, "read_unified", side_effect=fake_unified):
-        out = _read_pipeline._read_batch_hdus(
-            cpp_module=cpp,
-            path="a.fits",
-            hdu=[0, 1],
-            device="cpu",
-            mmap=True,
-            fp16=False,
-            bf16=False,
-            raw_scale=False,
-            scale_on_device=True,
-            columns=None,
-            start_row=1,
-            num_rows=-1,
-            cache_capacity=10,
-            fast_header=True,
-            return_header=False,
-            batch_to_device=lambda xs, d: xs,
-            autodetect_hdu=lambda p, c: 0,
-            resolve_image_mmap=lambda *a, **k: True,
-            read_check_cache=lambda *a, **k: (False, None, None),
-            read_header=lambda *a, **k: {},
-            debug_scale=False,
-            cold_nocache=False,
-            read_exc_types=io._READ_EXC_TYPES,
-            logger=logger,
-        )
+    path = str(tmp_path / "two.fits")
+    first = torch.full((2, 2), 1.0)
+    second = torch.full((3, 3), 2.0)
+    torchfits.write(
+        path,
+        torchfits.HDUList([torchfits.TensorHDU(first), torchfits.TensorHDU(second)]),
+        overwrite=True,
+    )
+    with mock.patch.object(
+        native, "read_hdus_batch", return_value=[torch.zeros(2, 2)]
+    ) as batch:
+        out = torchfits.read(path, hdu=[0, 1], mmap=mmap)
+    assert batch.called, "the batch route was not taken; the fault was not injected"
     assert len(out) == 2
-    assert calls == [0, 1]
-    # ``fake_unified`` stamps each read with its own call ordinal, so this pins
-    # attribution and not merely the count: ``out[i]`` must be the read of
-    # ``hdu[i]``. Asserting only the length and the call order left a
-    # permutation of the results completely invisible -- which is the whole
-    # failure this contract exists to prevent (R2-052).
-    assert [float(t.reshape(-1)[0]) for t in out] == [1.0, 2.0]
+    assert torch.equal(out[0], first)
+    assert torch.equal(out[1], second)
 
 
 def _fallback_kwargs(cpp, handle, read_header, **overrides):
