@@ -8,14 +8,15 @@ fitsio. Astropy and fitsio are comparators here, not torchfits dependencies.
 
 ## Subject
 
-Install an explicit torchfits wheel, then this package:
+torchfits is not in `pixi.toml` or `pixi.lock`; install the subject
+explicitly. Pixi installs this package (editable) and leaves the subject alone:
 
 ```bash
-pixi run subject /path/to/torchfits-*.whl
-pixi run dev
+pixi run subject /path/to/torchfits-*.whl   # wheel, path or pip spec, --no-deps
+pixi run subject-local                      # build ../torchfits into a temp dir
 ```
 
-`pixi run dev` is `pip install -e . --no-deps`. Do not path-depend on a
+Do not add torchfits back to the lock, do not path-depend on a
 torchfits checkout, do not put a torchfits checkout on `PYTHONPATH`, and do
 not vendor CFITSIO. Record the subject with `python -c "import torchfits_harness; print(torchfits_harness.subject())"`.
 

@@ -1,7 +1,7 @@
 """Evaluation package for an installed torchfits subject.
 
-This tree does not build torchfits or vendor CFITSIO. Install a torchfits
-wheel first, then this package with ``pip install -e . --no-deps``.
+This tree does not build torchfits or vendor CFITSIO, and torchfits is not a
+dependency: install the subject with ``pixi run subject <wheel-or-spec>``.
 """
 
 from __future__ import annotations

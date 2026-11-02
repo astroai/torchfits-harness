@@ -12,13 +12,20 @@ point it at — it does not compile torchfits or vendor CFITSIO.
 
 ```bash
 pixi install
-pixi run subject /path/to/torchfits-*.whl
-pixi run dev
+pixi run subject /path/to/torchfits-*.whl   # or a pip spec: torchfits, torchfits==1.3.1
 pixi run test          # fitsio and astropy upstream smokes
 pixi run bench-cpp     # bounded C++ backend comparison
 pixi run corpus-fetch  # real archive files, gitignored (~8 MB for the CI tier)
 pixi run corpus-test   # value parity against astropy/fitsio and pure CFITSIO
 ```
+
+torchfits is the subject under test, not a locked dependency: `pixi install`
+does not install it and later `pixi run`s do not replace it. `pixi run subject`
+installs a wheel, path or pip spec with `pip --no-deps`; `pixi run
+subject-local` builds a wheel from a sibling `../torchfits` checkout (or
+`TORCHFITS_SOURCE`) with that checkout's own pixi env and installs it. Tests
+stop with an instruction when no subject is installed, and every pytest run
+prints the torchfits version and path it tested.
 
 `pixi run bench-fits`, `pixi run bench-fitstable`, and `pixi run bench-all`
 run the larger suites in this same environment. Full suites are opt-in.

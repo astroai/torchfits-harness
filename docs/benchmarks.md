@@ -1,7 +1,8 @@
 # Benchmarks
 
 > Run these from a torchfits-harness checkout. Install a torchfits wheel
-> (`pixi run subject <wheel>`), then `pixi run dev`. The comparison
+> (`pixi run subject <wheel>`, or `pixi run subject-local` for a sibling
+> `../torchfits` checkout); pixi does not lock or restore torchfits. The comparison
 > environment is the default Pixi env: `pixi run bench-fits`,
 > `pixi run bench-all`, `pixi run bench-cpp`. Commands below that say
 > `pixi run -e bench-all` or `pixi run -e bench-gpu` are the historical
