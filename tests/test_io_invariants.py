@@ -573,7 +573,10 @@ def test_quantize_table_isnull_is_arrow_null(tmp_path: Path) -> None:
 
 
 def test_native_float_nan_is_not_fits_tnull(tmp_path: Path) -> None:
-    """IEEE NaN without TNULLn stays a value; IS NULL is a FITS TNULL check."""
+    """IEEE NaN without TNULLn reads as a NaN value, not an Arrow null, but the
+    where= dialect treats it as unknown: ``IS NULL`` selects it and no
+    comparison does (torchfits docs/api-tables.md, "How null rows are
+    filtered")."""
     path = tmp_path / "float_nan.fits"
     torchfits.write(
         path.as_posix(),
@@ -581,7 +584,11 @@ def test_native_float_nan_is_not_fits_tnull(tmp_path: Path) -> None:
         overwrite=True,
     )
     nulls = torchfits.table.read(path.as_posix(), hdu=1, where="V IS NULL")
-    assert len(nulls) == 0
+    assert len(nulls) == 1
+    assert np.isnan(nulls.column("V").to_numpy()[0])
+    not_null = torchfits.table.read(path.as_posix(), hdu=1, where="V IS NOT NULL")
+    assert not_null.column("V").to_pylist() == [1.0, 3.0]
+    assert len(torchfits.table.read(path.as_posix(), hdu=1, where="V != 2")) == 2
     full = torchfits.table.read(path.as_posix(), hdu=1)
     assert full.column("V").null_count == 0
 
