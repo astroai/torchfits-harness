@@ -15,7 +15,8 @@ What is compared, per HDU:
 
 Column differences that are legitimate FITS semantics are normalized rather
 than skipped: fixed-width strings are right-stripped (``strip=True`` is the
-public default), scaled/null sentinels are compared as NaN, and a scaled image
+public default), integer columns are compared exactly with their null mask
+checked separately, float null sentinels are compared as NaN, and a scaled image
 is compared with the precision its offset allows (see ``_scaled_float_atol``).
 """
 
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pyarrow as pa
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -223,12 +225,38 @@ def _normalize_expected_column(column: Any) -> Any:
         if column.dtype.kind in "fc":
             return np.ma.filled(column.astype(np.float64), np.nan)
         if column.dtype.kind in "iu":
-            return np.ma.filled(column.astype(np.float64), np.nan)
+            # Integers stay integers: ``_assert_integer_column`` compares the
+            # null mask and the valid values separately, both exactly.
+            return column
         return np.array(
             [None if m else str(v).rstrip() for v, m in zip(column.data, column.mask, strict=True)],
             dtype=object,
         )
     return column
+
+
+def _assert_integer_column(
+    name: str, got: Any, expected: Any, *, hdu: int, where: str
+) -> None:
+    """Exact comparison of an integer column: null mask first, then values.
+
+    A float64 round trip with ``rtol=1e-6`` hides off-by-one and 64-bit
+    truncation errors on large integers, so neither side is cast.
+    """
+    got_mask = got.is_null().to_numpy(zero_copy_only=False)
+    got_values = got.fill_null(0).to_numpy(zero_copy_only=False)
+    exp_mask = np.ma.getmaskarray(expected)
+    exp_values = np.ma.getdata(expected)
+    assert got_values.shape == exp_values.shape, (hdu, name, got_values.shape)
+    np.testing.assert_array_equal(
+        got_mask, exp_mask, err_msg=f"hdu {hdu} col {name} null mask ({where})"
+    )
+    valid = ~exp_mask
+    np.testing.assert_array_equal(
+        got_values[valid].astype(object),
+        exp_values[valid].astype(object),
+        err_msg=f"hdu {hdu} col {name} ({where})",
+    )
 
 
 def _assert_column(
@@ -239,7 +267,13 @@ def _assert_column(
         expected_values = list(expected)
         assert len(got_values) == len(expected_values), (hdu, name, where)
         for i, (a, b) in enumerate(zip(got_values, expected_values, strict=True)):
-            if isinstance(b, (list, tuple, np.ndarray)):
+            if isinstance(b, np.ndarray) and b.dtype.kind in "iu":
+                np.testing.assert_array_equal(
+                    np.asarray(a).astype(object),
+                    b.astype(object),
+                    err_msg=f"hdu {hdu} col {name} row {i}",
+                )
+            elif isinstance(b, (list, tuple, np.ndarray)):
                 np.testing.assert_allclose(
                     np.asarray(a, dtype=np.float64),
                     np.asarray(b, dtype=np.float64),
@@ -267,6 +301,15 @@ def _assert_column(
         got_s = np.asarray([str(v).rstrip() for v in got], dtype=object)
         exp_s = np.asarray([str(v).rstrip() for v in expected], dtype=object)
         np.testing.assert_array_equal(got_s, exp_s, err_msg=f"hdu {hdu} col {name}")
+        return
+
+    if expected.dtype.kind in "iu" and got.dtype.kind in "iu":
+        assert got.shape == expected.shape, (hdu, name, got.shape, expected.shape)
+        np.testing.assert_array_equal(
+            got.astype(object),
+            np.asarray(expected).astype(object),
+            err_msg=f"hdu {hdu} col {name} ({where})",
+        )
         return
 
     got_f = np.asarray(got, dtype=np.float64)
@@ -304,7 +347,18 @@ def test_table_values_match_astropy(source: dict[str, Any]) -> None:
                 assert arrow.num_rows == stop - start
                 for name in data.columns.names:
                     expected = _normalize_expected_column(data[name][start:stop])
-                    got = arrow[name].to_numpy(zero_copy_only=False)
+                    column = arrow[name]
+                    if (
+                        pa.types.is_integer(column.type)
+                        and getattr(expected, "dtype", None) is not None
+                        and expected.dtype.kind in "iu"
+                        and np.ndim(expected) == 1
+                    ):
+                        _assert_integer_column(
+                            name, column, expected, hdu=index, where=f"{start}:{stop}"
+                        )
+                        continue
+                    got = column.to_numpy(zero_copy_only=False)
                     _assert_column(
                         name, got, expected, hdu=index, where=f"{start}:{stop}"
                     )
@@ -342,6 +396,14 @@ def test_numeric_columns_agree_with_fitsio(source: dict[str, Any]) -> None:
                     continue
                 got = torch_cols[name].numpy()
                 assert got.shape == expected.shape, (index, name, got.shape)
+                compared += 1
+                if expected.dtype.kind in "iu" and got.dtype.kind in "iu":
+                    np.testing.assert_array_equal(
+                        got.astype(object),
+                        expected.astype(object),
+                        err_msg=f"hdu {index} col {name}",
+                    )
+                    continue
                 np.testing.assert_allclose(
                     np.asarray(got, dtype=np.float64),
                     np.asarray(expected, dtype=np.float64),
@@ -350,6 +412,5 @@ def test_numeric_columns_agree_with_fitsio(source: dict[str, Any]) -> None:
                     equal_nan=True,
                     err_msg=f"hdu {index} col {name}",
                 )
-                compared += 1
     if compared == 0:
         pytest.skip("no numeric binary-table column to compare")
