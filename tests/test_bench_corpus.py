@@ -195,3 +195,42 @@ def test_main_without_corpus_files_is_a_clear_failure(
     )
     monkeypatch.setattr(bench_corpus.corpus, "families", lambda source: ("image",))
     assert bench_corpus.main(["--tier", "ci"]) == 1
+
+
+@pytest.fixture()
+def compressed_file(tmp_path: Path) -> Path:
+    """A scaled, tile-compressed image after an empty primary (an archive MEF)."""
+    path = tmp_path / "compressed.fits"
+    data = (np.arange(64 * 80, dtype=np.int32).reshape(64, 80) % 3000).astype(np.int16)
+    comp = astropy_fits.CompImageHDU(data, compression_type="RICE_1", name="SCI")
+    comp.header["BSCALE"] = 2.0
+    comp.header["BZERO"] = 100.0
+    astropy_fits.HDUList([astropy_fits.PrimaryHDU(), comp]).writeto(path)
+    return path
+
+
+@pytest.mark.parametrize("family", ["image", "table"])
+@pytest.mark.parametrize("max_mb", [128.0, 1e-4])
+def test_tile_compressed_image_is_benchmarked_as_an_image(
+    monkeypatch: pytest.MonkeyPatch, compressed_file: Path, family: str, max_mb: float
+) -> None:
+    """The raw view calls it a BinTableHDU; the case must still be an image."""
+    monkeypatch.setattr(bench_corpus.corpus, "sources", lambda **_: [_source("cmp", family)])
+    monkeypatch.setattr(bench_corpus.corpus, "source_files", lambda source: [compressed_file])
+    monkeypatch.setattr(bench_corpus.corpus, "families", lambda source: (family,))
+    cases, skipped = bench_corpus.select_cases(tier="ci", max_mb=max_mb)
+    assert not skipped
+    assert {case.kind for case in cases} == {"image"}
+    assert all(case.compressed and case.scaled and case.hdu == 1 for case in cases)
+    data_case = next(case for case in cases if case.operation != "read_header")
+    assert data_case.operation == ("read_full" if max_mb > 1 else "read_window")
+    if data_case.window is not None:
+        x0, y0, x1, y1 = data_case.window
+        assert (x1 - x0, y1 - y0) == (80, 64)
+
+    for method, fn in bench_corpus._methods(data_case).items():
+        result = fn()
+        pixels = result.numpy() if hasattr(result, "numpy") else np.asarray(result)
+        assert pixels.shape == (64, 80), method
+        assert float(pixels[0, 1]) == pytest.approx(102.0), method  # 2 * 1 + 100
+

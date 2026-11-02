@@ -84,6 +84,8 @@ class Case:
     n_points: int
     window: tuple[int, int, int, int] | None = None
     rows: int = 0
+    scaled: bool = False
+    compressed: bool = False
 
     def metadata(self) -> dict[str, Any]:
         payload = {
@@ -95,6 +97,8 @@ class Case:
             payload["window"] = list(self.window)
         if self.rows:
             payload["rows"] = self.rows
+        if self.compressed:
+            payload["compressed"] = True
         return payload
 
 
@@ -127,12 +131,29 @@ def _first_hdu(path: Path, predicate: Callable[[Any], bool]) -> tuple[int, Any] 
     return None
 
 
+def _is_compressed_image(hdu: Any) -> bool:
+    """A tile-compressed image, seen through ``disable_image_compression=True``.
+
+    The raw view shows it as a binary table of ``COMPRESSED_DATA``; every
+    reader decodes it as an image, so it must be benchmarked as one.
+    """
+    return bool(hdu.header.get("ZIMAGE", False))
+
+
 def _is_table(hdu: Any) -> bool:
-    return isinstance(hdu, (astropy_fits.BinTableHDU, astropy_fits.TableHDU))
+    return isinstance(
+        hdu, (astropy_fits.BinTableHDU, astropy_fits.TableHDU)
+    ) and not _is_compressed_image(hdu)
 
 
 def _is_image(hdu: Any) -> bool:
+    if _is_compressed_image(hdu):
+        return int(hdu.header.get("ZNAXIS", 0) or 0) > 0
     return not _is_table(hdu) and int(hdu.header.get("NAXIS", 0) or 0) > 0
+
+
+def _is_scaled(header: Any) -> bool:
+    return any(key in header for key in ("BSCALE", "BZERO", "BLANK"))
 
 
 def _image_cases(
@@ -149,6 +170,7 @@ def _image_cases(
     nbytes, shape, itemsize = _payload_bytes(header)
     size_mb = nbytes / 1e6
     ident = f"corpus_{source['id']}_image"
+    flags = {"scaled": _is_scaled(header), "compressed": "ZIMAGE" in header}
     cases = [
         Case(
             case_id=f"{ident}_header",
@@ -160,6 +182,7 @@ def _image_cases(
             kind="image",
             size_mb=0.0,
             n_points=len(header.cards) if hasattr(header, "cards") else 0,
+            **flags,
         )
     ]
     if nbytes / (1024.0**2) <= max_mb:
@@ -174,6 +197,7 @@ def _image_cases(
                 kind="image",
                 size_mb=size_mb,
                 n_points=int(np.prod(shape)),
+                **flags,
             )
         )
     elif len(shape) == 2:
@@ -199,6 +223,7 @@ def _image_cases(
                 size_mb=(x1 - x0) * (y1 - y0) * itemsize / 1e6,
                 n_points=(x1 - x0) * (y1 - y0),
                 window=(x0, y0, x1, y1),
+                **flags,
             )
         )
     return cases
@@ -321,8 +346,14 @@ def _methods(case: Case) -> dict[str, Callable[[], Any]]:
             with astropy_fits.open(path, memmap=True) as hdul:
                 return hdul[case.hdu].data[: case.rows]
         x0, y0, x1, y1 = case.window or (0, 0, WINDOW, WINDOW)
-        with astropy_fits.open(path, memmap=True) as hdul:
-            return np.array(hdul[case.hdu].data[y0:y1, x0:x1])
+        # memmap only for unscaled HDUs: astropy refuses to memory-map an
+        # image it has to rescale. A tile-compressed HDU decodes the tiles the
+        # window touches through ``section``.
+        with astropy_fits.open(path, memmap=not case.scaled) as hdul:
+            hdu = hdul[case.hdu]
+            if isinstance(hdu, astropy_fits.CompImageHDU):
+                return np.array(hdu.section[y0:y1, x0:x1])
+            return np.array(hdu.data[y0:y1, x0:x1])
 
     methods["torchfits"] = torchfits_read
     methods["astropy"] = astropy_read
