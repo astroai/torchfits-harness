@@ -19,6 +19,12 @@ def _open_fd_count() -> int:
     pytest.skip("no /dev/fd or /proc/self/fd to count descriptors with")
 
 
+#: torchfits 1.3.1 validates table geometry against the file size before
+#: reading ("Reject overflowing, truncated, or out-of-bounds ... table
+#: geometry"), so a short file reports the extent it is missing.
+TRUNCATED = r"truncat|exceeds physical file size"
+
+
 @pytest.fixture()
 def truncated_table(tmp_path):
     path = tmp_path / "trunc.fits"
@@ -31,18 +37,18 @@ def truncated_table(tmp_path):
 
 
 def test_mmap_read_raises_clean_error(truncated_table):
-    with pytest.raises(RuntimeError, match="truncat"):
+    with pytest.raises(RuntimeError, match=TRUNCATED):
         torchfits.read(truncated_table, hdu=1, mmap=True)
 
 
 def test_filtered_read_raises_clean_error(truncated_table):
-    with pytest.raises(RuntimeError, match="truncat"):
+    with pytest.raises(RuntimeError, match=TRUNCATED):
         ttable.read(truncated_table, hdu=1, where="A > 3")
 
 
 def test_mmap_update_tail_rows_raises_clean_error(truncated_table):
     payload = {"A": np.zeros(5, dtype=np.int32)}
-    with pytest.raises(RuntimeError, match="truncat"):
+    with pytest.raises(RuntimeError, match=TRUNCATED):
         ttable.update_rows(
             truncated_table, payload, row_slice=(49995, 50000), mmap=True
         )
@@ -76,7 +82,7 @@ def test_truncated_vla_read_raises_clean_error(tmp_path):
 
 def test_truncated_projection_read_raises_clean_error(truncated_table):
     """Single-column projections validate the extent just like full reads."""
-    with pytest.raises(RuntimeError, match="truncat"):
+    with pytest.raises(RuntimeError, match=TRUNCATED):
         torchfits.read(truncated_table, hdu=1, columns=["A"], mmap=True)
 
 
@@ -117,11 +123,11 @@ def test_rejected_truncated_mmap_call_releases_its_descriptor(
     calls = 40
     # Warm up first: the first call may legitimately cache a handle (the
     # per-thread reader and the shared read metadata both hold descriptors).
-    with pytest.raises(RuntimeError, match="truncat"):
+    with pytest.raises(RuntimeError, match=TRUNCATED):
         call()
     before = _open_fd_count()
     for _ in range(calls):
-        with pytest.raises(RuntimeError, match="truncat"):
+        with pytest.raises(RuntimeError, match=TRUNCATED):
             call()
     leaked = _open_fd_count() - before
     assert leaked < calls, (
@@ -129,5 +135,5 @@ def test_rejected_truncated_mmap_call_releases_its_descriptor(
     )
     # The binding is the same code path the public entry points take; pin it
     # directly too so a future wrapper cannot hide a regression here.
-    with pytest.raises(RuntimeError, match="truncat"):
+    with pytest.raises(RuntimeError, match=TRUNCATED):
         cpp.read_fits_table_rows(truncated_table, 1, [], 1, -1, True)
