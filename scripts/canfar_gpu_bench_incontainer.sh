@@ -53,6 +53,11 @@ export PIP_CACHE_DIR="${SCRATCH}/pip-cache"
 export TMPDIR="${SCRATCH}/tmp"
 mkdir -p "${PIP_CACHE_DIR}" "${TMPDIR}"
 
+# The image's pixi can be newer than pixi.toml's pin, and `requires-pixi` then
+# aborts before `pixi install`; put the pinned release on PATH first.
+. "${REPO_ROOT}/scripts/canfar_pinned_pixi.sh"
+use_pinned_pixi
+
 pixi install
 
 # The subject is a torchfits wheel. This checkout does not vendor CFITSIO.
@@ -64,7 +69,7 @@ fi
 if [[ -n "${TORCHFITS_WHEEL:-}" ]]; then
   pixi run python -m pip install --no-cache-dir --force-reinstall --no-deps "${TORCHFITS_WHEEL}"
 else
-  pixi run python -m pip install --no-cache-dir --no-deps "torchfits>=1.3.0"
+  pixi run python -m pip install --no-cache-dir --no-deps torchfits
 fi
 pixi run dev
 pixi run python -c "import torch, torchfits; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'torchfits', torchfits.__version__)"
@@ -167,7 +172,9 @@ if [[ -n "${ARC_URI}" && -d "${ARC_URI}" ]]; then
   cp -a "${RUN_DIR}/manifest.txt" "${ARC_URI}/manifest.txt"
 fi
 
-if [[ "${PERSISTED}" -ne 1 ]]; then
+# Modes that produce no CSVs (release-gate) have nothing to archive, so the
+# persistence requirement only applies when a bench output tree exists.
+if [[ -d "${BENCH_OUT}" && "${PERSISTED}" -ne 1 ]]; then
   echo "ERROR: bench finished but neither /arc nor vos: archive succeeded" >&2
   echo "  ARC=${TORCHFITS_ARC_DEST:-unset} VOS=${TORCHFITS_VOS_DEST:-unset}" >&2
   exit 1

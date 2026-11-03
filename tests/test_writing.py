@@ -1,6 +1,8 @@
 import os
 
 import numpy as np
+from pathlib import Path
+
 import pytest
 import torch
 from astropy.io import fits
@@ -86,7 +88,9 @@ def test_failed_overwrite_preserves_existing_file(tmp_path):
     torchfits.write(str(path), original)
     before = path.read_bytes()
 
-    with pytest.raises(RuntimeError, match="Unsupported object/structure"):
+    # Invalid input is a ValueError since torchfits' "io: Let write() raise
+    # the documented ValueError for invalid input".
+    with pytest.raises(ValueError, match="Unsupported object/structure"):
         torchfits.write(
             str(path),
             {"bad": [{"nested": "object"}]},
@@ -111,19 +115,21 @@ def test_successful_overwrite_is_atomic_and_preserves_mode(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "payload, message",
+    "payload, error, message",
     [
-        ([], "At least one writable HDU"),
-        ([object()], "Unsupported HDU item type"),
-        ([{"data": "not a tensor"}], "must be a torch.Tensor"),
-        ([{"header": {"OBJECT": "M31"}}], "must contain a 'data' tensor"),
+        # Invalid values are ValueError; wrong types surface as the
+        # RuntimeError wrapper around their TypeError.
+        ([], ValueError, "At least one writable HDU"),
+        ([object()], RuntimeError, "Unsupported HDU item type"),
+        ([{"data": "not a tensor"}], RuntimeError, "must be a torch.Tensor"),
+        ([{"header": {"OBJECT": "M31"}}], ValueError, "must contain a 'data' tensor"),
     ],
 )
 def test_invalid_hdu_sequences_fail_instead_of_writing_empty_hdus(
-    tmp_path, payload, message
+    tmp_path, payload, error, message
 ):
     path = tmp_path / "invalid_sequence.fits"
-    with pytest.raises(RuntimeError, match=message):
+    with pytest.raises(error, match=message):
         torchfits.write(str(path), payload)
     assert not path.exists()
 
@@ -215,7 +221,7 @@ def test_table_write_vla_mixed_dtype_rejected(tmp_path):
     table = {
         "VLA": [np.array([1, 2], dtype=np.int32), np.array([3, 4, 5], dtype=np.int64)]
     }
-    with pytest.raises(RuntimeError, match="Dictionary table writes"):
+    with pytest.raises(ValueError, match="Dictionary table writes"):
         torchfits.write(path, table, overwrite=True)
     assert not os.path.exists(path)
 
@@ -223,21 +229,21 @@ def test_table_write_vla_mixed_dtype_rejected(tmp_path):
 def test_table_write_vla_bool_uint8_mix_rejected(tmp_path):
     path = str(tmp_path / "vla_bool_u8.fits")
     table = {"VLA": [np.array([True, False]), np.array([200, 7, 9], dtype=np.uint8)]}
-    with pytest.raises(RuntimeError, match="Dictionary table writes"):
+    with pytest.raises(ValueError, match="Dictionary table writes"):
         torchfits.write(path, table, overwrite=True)
 
 
 def test_table_write_vla_string_items_rejected(tmp_path):
     path = str(tmp_path / "vla_str.fits")
     table = {"VLA": [np.array([1, 2], dtype=np.int32), "oops"]}
-    with pytest.raises(RuntimeError, match="Dictionary table writes"):
+    with pytest.raises(ValueError, match="Dictionary table writes"):
         torchfits.write(path, table, overwrite=True)
 
 
 def test_table_write_vla_2d_items_rejected(tmp_path):
     path = str(tmp_path / "vla_2d.fits")
     table = {"VLA": [np.zeros((2, 3), dtype=np.int32), np.ones((4, 5), dtype=np.int32)]}
-    with pytest.raises(RuntimeError, match="Dictionary table writes"):
+    with pytest.raises(ValueError, match="Dictionary table writes"):
         torchfits.write(path, table, overwrite=True)
 
 
@@ -418,15 +424,16 @@ def test_rewrite_ops_do_not_mutate_input_hdu(tmp_path):
 def test_bytes_header_value_rejected_on_compressed_rewrite(tmp_path):
     """Non-ASCII bytes header values must raise, never decode into a silently
     shortened card on the no-replay rewrite path."""
-    from torchfits._io_engine._hdu_rewrite import replace_hdu
-
     path = str(tmp_path / "rawb.fits")
     torchfits.write(path, torch.zeros(2, 2), overwrite=True, compress=True)
+    before = Path(path).read_bytes()
     bad = torchfits.TensorHDU(
         torch.ones(2, 2), header=torchfits.Header({"RAW": b"\xff\xfe"})
     )
+    # HDU 1 is the compressed image: compress= cannot target the primary.
     with pytest.raises(UnicodeDecodeError):
-        replace_hdu(path, 0, bad, compress=True)
+        torchfits.replace_hdu(path, 1, bad, compress=True)
+    assert Path(path).read_bytes() == before
 
 
 def test_write_sequence_with_quantize_rejected(tmp_path):

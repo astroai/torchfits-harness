@@ -441,6 +441,27 @@ def test_download_resume_rejects_incomplete_206(tmp_path, monkeypatch):
     assert partial.read_bytes() == b"a" * 10 + b"b" * 10
 
 
+def _fits_body(n_data: int, fill: bytes = b"\x2a") -> bytes:
+    """A small, valid FITS file (8-bit image of ``n_data`` pixels) as bytes.
+
+    torchfits refuses to cache an HTTP body that is not FITS ("data: Never
+    cache a non-FITS HTTP body as a download"), so download fixtures must
+    serve real FITS bytes rather than arbitrary payloads.
+    """
+    cards = [
+        "SIMPLE  =                    T",
+        "BITPIX  =                    8",
+        "NAXIS   =                    1",
+        f"NAXIS1  = {n_data:>20d}",
+        "END",
+    ]
+    header = b"".join(card.ljust(80).encode("ascii") for card in cards)
+    header = header.ljust(2880, b" ")
+    data = (fill * n_data)[:n_data]
+    pad = (-len(data)) % 2880
+    return header + data + b"\0" * pad
+
+
 def _race_worker(url: str, cache_dir: str, expected: bytes, flags, idx: int) -> None:
     from pathlib import Path
 
@@ -464,7 +485,7 @@ def test_resolve_local_path_multiprocess_single_download(tmp_path, allow_loopbac
     """Concurrent *processes* resolve one URL with exactly one HTTP fetch."""
     import multiprocessing as mp
 
-    body = bytes(range(256)) * 32
+    body = _fits_body(8192)
 
     class _RaceHandler(BaseHTTPRequestHandler):
         requests = 0
@@ -523,7 +544,7 @@ def test_download_http_stale_partial_with_validator_restarts_cleanly(
     from torchfits.data.remote import cache_path_for_url
     from torchfits.data.remote import resolve_local_path
 
-    body = b"REAL-FITS-PAYLOAD" * 64
+    body = _fits_body(1088, fill=b"REAL-FITS-PAYLOAD")
 
     class _AlwaysFull(BaseHTTPRequestHandler):
         seen_range = []
@@ -568,7 +589,7 @@ def test_download_http_partial_without_validator_is_discarded(tmp_path, allow_lo
     from torchfits.data.remote import cache_path_for_url
     from torchfits.data.remote import resolve_local_path
 
-    body = b"FRESH-BODY" * 128
+    body = _fits_body(1280, fill=b"FRESH-BODY")
 
     class _ProbeHandler(BaseHTTPRequestHandler):
         seen_range = []

@@ -1,8 +1,6 @@
 [workspace]
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
-# Same manager pin as torchfits so the two locks are solved with one Pixi.
-requires-pixi = "==0.82.0"
 
 [dependencies]
 python = "3.13.*"
@@ -18,16 +16,51 @@ pandas = ">=2.2"
 psutil = ">=5"
 pytorch = ">=2.14,<2.15"
 pip = ">=24"
+astroquery = ">=0.4.11,<0.5"
+pytest-cov = ">=7.1.0,<8"
+gcovr = ">=8"
 
 [activation.env]
 PYTHONNOUSERSITE = "1"
 
 [tasks]
 dev = "pip install -e . --no-deps"
-# Install a torchfits wheel, then this package. Pass the wheel path after --.
-subject = "pip install --no-deps"
-test = "pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q"
+# The subject under test. torchfits is deliberately not in the lock, so pixi
+# never pins it and never reverts it: install a wheel, path or pip spec with
+# `pixi run subject <wheel-or-spec>`, or build ../torchfits with subject-local.
+subject = "pip install --no-deps --force-reinstall"
+subject-local = "bash scripts/subject_local.sh"
+test ="pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q"
 bench-cpp = "python benchmarks/bench_cpp_backend.py"
+# Real-archive corpus: the CI tier is ~8 MB, the full tier ~16 GB.
+corpus-fetch = "python scripts/fetch_corpus.py --tier ci"
+corpus-fetch-full = "python scripts/fetch_corpus.py --tier full"
+corpus-list = "python scripts/fetch_corpus.py --tier full --list"
+corpus-verify = "python scripts/fetch_corpus.py --tier ci --verify"
+corpus-test = "pytest tests/test_corpus_manifest.py tests/test_corpus_parity.py tests/test_operation_matrix.py tests/test_write_parity.py -q"
+oracle-test = "pytest tests/test_cfitsio_oracle.py -q"
+# Upstream behaviour replays: fitsio, astropy, CFITSIO, CCfits, EleFits, qfits, sfitsio.
+replay-test = "pytest tests/test_replay_*.py tests/test_upstream_parity_inventory.py -q"
+# Public-surface gate: every exported symbol must be mentioned by a test.
+surface-report = "python scripts/surface_report.py"
+surface-update = "python scripts/surface_report.py --update --markdown docs/public-surface.md"
+# Contract gates: the corpus benchmark, the CLI, the public surface and the
+# executed docs tour. They skip the corpus-dependent cases when it is absent.
+contract-test = "pytest tests/test_bench_corpus.py tests/test_cli_suite.py tests/test_public_surface.py tests/test_tour.py -q"
+# Local macOS lane: MPS device placement and the float32 transform branches.
+# CANFAR has no MPS device, so nothing else covers them.
+mps-lane = "bash scripts/mps_lane.sh"
+# Every CANFAR lane in one session (corpus, replays, contracts, benchmarks).
+lanes-canfar = "bash scripts/launch_canfar_all_lanes.sh"
+lanes-canfar-gpu = "bash scripts/launch_canfar_all_lanes.sh --gpu"
+# Line coverage of the installed torchfits wheel (no source, no compilation).
+coverage-python = "pytest tests -q --cov=torchfits --cov-report=term:skip-covered --cov-report=html:reports/python-coverage"
+# C/C++ coverage needs an instrumented build; see docs/coverage.md.
+coverage-cpp = "bash scripts/cpp_coverage.sh"
+# Real archive files: same three readers, same file, one interleaved timer.
+bench-corpus = "python -m benchmarks.bench_corpus"
+# Per-call Python overhead over the nanobind bindings (docs/api-overhead.md).
+api-overhead = "python scripts/api_overhead.py"
 # Local suites use this env. The subject is an installed torchfits wheel, not a
 # build of this repo. Set TORCHFITS_BENCH_ENV to select another Pixi env.
 bench-fits = "python benchmarks/bench_all.py --profile user --fits-only"

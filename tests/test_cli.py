@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 
+import numpy as np
 import pytest
 import torch
 
@@ -727,22 +728,21 @@ def test_invalid_hdu_is_usage_error(image_fits):
     assert result.returncode == 2, result.stderr
 
 
-def test_vos_probe_missing_package_message(monkeypatch):
-    import builtins
-
-    from torchfits.cli import cmds_probe
-    from torchfits.cli.common import UsageError
-
-    real_import = builtins.__import__
-
-    def _block_vos(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "vos" or name.startswith("vos."):
-            raise ImportError("vos blocked for test")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", _block_vos)
-    with pytest.raises(UsageError, match="vos"):
-        cmds_probe._probe_vos("vos:example/file.fits", header_bytes=5760)
+def test_vos_probe_missing_package_message():
+    """Without the optional ``vos`` package, probing a vos: URI is a usage error."""
+    # ``sys.modules["vos"] = None`` makes any ``import vos`` raise ImportError,
+    # so the CLI sees the package as missing whether or not it is installed.
+    launcher = (
+        "import runpy, sys; sys.modules['vos'] = None; "
+        "sys.argv = ['torchfits', 'probe', 'vos:example/file.fits']; "
+        "runpy.run_module('torchfits.cli', run_name='__main__')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", launcher], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 2, result.stderr
+    assert "vos" in result.stderr
+    assert "install" in result.stderr
 
 
 def test_vos_probe_bad_uri_is_io_error_when_vos_present():
@@ -868,9 +868,12 @@ def test_stats_std_median_json(image_fits):
     payload = json.loads(result.stdout)
     assert "std" in payload[0]
     assert "median" in payload[0]
-    tensor = torchfits.read_tensor(str(image_fits), hdu=0).float().reshape(-1)
-    assert payload[0]["std"] == pytest.approx(float(tensor.std(unbiased=False)))
-    assert payload[0]["median"] == pytest.approx(float(tensor.median()))
+    # Stats run in float64 over finite pixels, and the median of an even count
+    # is the midpoint of the two middle values (torchfits changelog: "cli:
+    # Stats over finite pixels in float64 with midpoint median").
+    pixels = torchfits.read_tensor(str(image_fits), hdu=0).numpy().astype(np.float64)
+    assert payload[0]["std"] == pytest.approx(float(np.std(pixels)))
+    assert payload[0]["median"] == pytest.approx(float(np.median(pixels)))
 
 
 def test_compress_algorithm_gzip(image_fits, tmp_path):

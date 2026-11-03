@@ -1,0 +1,417 @@
+"""Value parity on real archive files, with astropy and fitsio as oracles.
+
+The corpus is fetched by ``scripts/fetch_corpus.py`` and is gitignored, so every
+test skips cleanly until the files are present. The run covers the ~8 MB CI
+tier that ``pixi run corpus-fetch`` fetches; set ``TORCHFITS_CORPUS_TIER=full``
+after ``pixi run corpus-fetch-full`` to cover the whole corpus.
+
+What is compared, per HDU:
+
+* HDU count, type string and EXTNAME;
+* image shape and pixels, in full when small enough and otherwise as a central
+  window read through ``read_subset``;
+* table row count, column names/order and column values over the first and last
+  row windows (never the whole 6.7 GB catalog);
+* header keyword sequence and values.
+
+Column differences that are legitimate FITS semantics are normalized rather
+than skipped: fixed-width strings are right-stripped (``strip=True`` is the
+public default), integer columns are compared exactly with their null mask
+checked separately, float null sentinels are compared as NaN, and a scaled image
+is compared with the precision its offset allows (see ``_scaled_float_atol``).
+"""
+
+from __future__ import annotations
+
+import math
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pyarrow as pa
+import pytest
+
+torch = pytest.importorskip("torch")
+
+import torchfits  # noqa: E402
+import torchfits.table as tf_table  # noqa: E402
+from astropy.io import fits  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from benchmarks import corpus  # noqa: E402
+
+TIER = os.environ.get("TORCHFITS_CORPUS_TIER", "ci")
+SOURCES = [
+    source
+    for source in corpus.sources(tier=TIER)
+    if source["kind"] != "astropy"  # covered by test_astropy_corpus_diff.py
+]
+
+#: Above this payload we compare a central window instead of the whole image.
+FULL_IMAGE_LIMIT = 64 * 1024**2
+#: Above this file size only a sample of HDUs is compared.
+HUGE_FILE = 512 * 1024**2
+#: Rows compared at each end of a table.
+ROWS = 2000
+
+F32_EPS = float(np.finfo(np.float32).eps)
+
+
+def _scaled_float_atol(zero: float, scale: float, expected: np.ndarray) -> float:
+    """Slack for two float renderings of the same scaled integer image.
+
+    astropy renders ``BSCALE``/``BZERO`` images in ``float32`` and applies the
+    offset in that precision; torchfits applies it in double and casts once.
+    With a large offset the operands themselves round differently, so the two
+    pixels disagree by up to ``eps32 * (|BZERO| + |BSCALE * q|)`` — 0.008 for
+    the CFHT frames whose ``BZERO`` is 33 323.4, while the pixel is ~576. That
+    is arithmetic order, not a wrong value: a dropped or doubled offset, or a
+    wrong scale, is orders of magnitude larger than this bound.
+
+    ``zero`` and ``scale`` come from the caller because astropy removes the two
+    cards from an image header once the data has been scaled.
+    """
+    if zero == 0.0 and scale == 1.0:
+        return 1e-6
+    values = np.asarray(expected, dtype=np.float64)
+    # ``values - zero`` is ``BSCALE * q``: the other operand of the sum.
+    scaled = float(np.max(np.abs(values - zero))) if values.size else 0.0
+    return F32_EPS * (abs(zero) + scaled)
+
+
+def _sample_indices(hdul: Any, path: Path) -> list[int]:
+    """HDUs worth opening: every one, unless each open costs a decompression."""
+    expensive = str(path).endswith(".gz") or Path(path).stat().st_size > HUGE_FILE
+    if not expensive:
+        return list(range(len(hdul)))
+    indices = [0]
+    tables = [
+        i for i, h in enumerate(hdul) if isinstance(h, (fits.BinTableHDU, fits.TableHDU))
+    ]
+    # Header-only test for data: touching ``hdu.data`` here would decompress
+    # every extension and let astropy consume BSCALE/BZERO from the header
+    # before the caller can read them.
+    images = [
+        i
+        for i, h in enumerate(hdul)
+        if i not in tables and h.header.get("NAXIS", 0) > 0
+    ]
+    if tables:
+        indices.append(tables[0])
+    if images:
+        indices.append(images[len(images) // 2])
+    if len(hdul) - 1 not in indices:
+        indices.append(len(hdul) - 1)
+    return indices
+
+
+@pytest.mark.parametrize("source", SOURCES, ids=[s["id"] for s in SOURCES])
+def test_hdu_inventory_matches_astropy(source: dict[str, Any]) -> None:
+    path = corpus.require(source)
+    if isinstance(path, list):
+        pytest.skip("multi-file source")
+    with fits.open(path) as hdul:
+        assert torchfits.read_num_hdus(str(path)) == len(hdul)
+        for index in _sample_indices(hdul, Path(path)):
+            hdu = hdul[index]
+            expected = {
+                fits.PrimaryHDU: "IMAGE",
+                fits.ImageHDU: "IMAGE",
+                fits.CompImageHDU: "IMAGE",
+                fits.GroupsHDU: "IMAGE",
+                fits.BinTableHDU: "BINARY_TABLE",
+                fits.TableHDU: "ASCII_TABLE",
+            }.get(type(hdu))
+            if expected is None:
+                continue
+            assert torchfits.read_hdu_type(str(path), index) == expected, index
+            extname = (hdu.header.get("EXTNAME") or "").strip() or None
+            assert torchfits.read_extname(str(path), index) == extname, index
+
+
+def _header_cards(header: Any) -> list[tuple[str, Any]]:
+    """Non-blank cards in file order (COMMENT/HISTORY included)."""
+    cards: list[tuple[str, Any]] = []
+    for card in header.cards:
+        key = getattr(card, "keyword", None) or getattr(card, "key", "")
+        key = (key or "").strip()
+        if not key or key == "CONTINUE":
+            continue
+        cards.append((key, card.value))
+    return cards
+
+
+@pytest.mark.parametrize("source", SOURCES, ids=[s["id"] for s in SOURCES])
+def test_header_cards_match_astropy(source: dict[str, Any]) -> None:
+    path = corpus.require(source)
+    if isinstance(path, list):
+        pytest.skip("multi-file source")
+    # Raw view: torchfits' Header is the on-disk one, and for tile-compressed
+    # HDUs astropy's default view rewrites it into the decompressed image's.
+    with fits.open(path, disable_image_compression=True, memmap=True) as hdul:
+        for index in _sample_indices(hdul, Path(path)):
+            hdu = hdul[index]
+            got = _header_cards(torchfits.read_header(str(path), index))
+            expected = _header_cards(hdu.header)
+            assert [key for key, _ in got] == [key for key, _ in expected], index
+            for (key, a), (_, b) in zip(got, expected, strict=True):
+                if isinstance(a, str) and isinstance(b, str):
+                    # COMMENT/HISTORY values keep the card's post-key padding in
+                    # astropy and drop it in torchfits; compare the text itself.
+                    assert a.strip() == b.strip(), (index, key, a, b)
+                elif isinstance(b, float) and math.isnan(b):
+                    assert isinstance(a, float) and math.isnan(a), (index, key)
+                else:
+                    assert a == b, (index, key, a, b)
+
+
+@pytest.mark.parametrize("source", SOURCES, ids=[s["id"] for s in SOURCES])
+def test_image_pixels_match_astropy(source: dict[str, Any]) -> None:
+    path = corpus.require(source)
+    if isinstance(path, list):
+        pytest.skip("multi-file source")
+    size = Path(path).stat().st_size
+    with fits.open(path) as hdul:
+        image_indices = [
+            index
+            for index, hdu in enumerate(hdul)
+            if hdu.header.get("NAXIS", 0) > 0
+            and not isinstance(hdu, fits.BinTableHDU | fits.TableHDU)
+        ]
+        if not image_indices:
+            pytest.skip("no image HDU")
+        if len(image_indices) > 12 or size > HUGE_FILE or str(path).endswith(".gz"):
+            sampled = _sample_indices(hdul, Path(path))
+            image_indices = [i for i in sampled if i in set(image_indices)] or [
+                image_indices[0]
+            ]
+        for index in image_indices:
+            hdu = hdul[index]
+            # Capture the scaling before touching ``data``: astropy consumes
+            # BSCALE/BZERO from the image header when it applies them.
+            zero = float(hdu.header.get("BZERO", 0.0) or 0.0)
+            scale = float(hdu.header.get("BSCALE", 1.0) or 1.0)
+            expected = np.asarray(hdu.data)
+            nbytes = expected.size * expected.dtype.itemsize
+            if nbytes > FULL_IMAGE_LIMIT:
+                y0 = max(0, expected.shape[0] // 2 - 128)
+                x0 = max(0, expected.shape[-1] // 2 - 128)
+                y1 = min(expected.shape[0], y0 + 256)
+                x1 = min(expected.shape[-1], x0 + 256)
+                got = torchfits.read_subset(str(path), index, x0, y0, x1, y1).numpy()
+                expected = expected[y0:y1, x0:x1]
+            else:
+                got = torchfits.read_tensor(str(path), index).numpy()
+            assert got.shape == expected.shape, (index, got.shape, expected.shape)
+            if expected.dtype.kind in "iu" and got.dtype.kind in "iu":
+                np.testing.assert_array_equal(got, expected, err_msg=f"hdu {index}")
+            else:
+                np.testing.assert_allclose(
+                    got.astype(np.float64),
+                    expected.astype(np.float64),
+                    rtol=1e-6,
+                    atol=_scaled_float_atol(zero, scale, expected),
+                    equal_nan=True,
+                    err_msg=f"hdu {index}",
+                )
+
+
+def _normalize_expected_column(column: Any) -> Any:
+    if isinstance(column, np.ma.MaskedArray):
+        if column.dtype.kind in "fc":
+            return np.ma.filled(column.astype(np.float64), np.nan)
+        if column.dtype.kind in "iu":
+            # Integers stay integers: ``_assert_integer_column`` compares the
+            # null mask and the valid values separately, both exactly.
+            return column
+        return np.array(
+            [None if m else str(v).rstrip() for v, m in zip(column.data, column.mask, strict=True)],
+            dtype=object,
+        )
+    return column
+
+
+def _assert_integer_column(
+    name: str, got: Any, expected: Any, *, hdu: int, where: str
+) -> None:
+    """Exact comparison of an integer column: null mask first, then values.
+
+    A float64 round trip with ``rtol=1e-6`` hides off-by-one and 64-bit
+    truncation errors on large integers, so neither side is cast.
+    """
+    got_mask = got.is_null().to_numpy(zero_copy_only=False)
+    got_values = got.fill_null(0).to_numpy(zero_copy_only=False)
+    exp_mask = np.ma.getmaskarray(expected)
+    exp_values = np.ma.getdata(expected)
+    assert got_values.shape == exp_values.shape, (hdu, name, got_values.shape)
+    np.testing.assert_array_equal(
+        got_mask, exp_mask, err_msg=f"hdu {hdu} col {name} null mask ({where})"
+    )
+    valid = ~exp_mask
+    np.testing.assert_array_equal(
+        got_values[valid].astype(object),
+        exp_values[valid].astype(object),
+        err_msg=f"hdu {hdu} col {name} ({where})",
+    )
+
+
+def _assert_column(
+    name: str, got: Any, expected: Any, *, hdu: int, where: str
+) -> None:
+    if isinstance(expected, (list, tuple)) or got.dtype == object:
+        got_values = got.tolist() if hasattr(got, "tolist") else list(got)
+        expected_values = list(expected)
+        assert len(got_values) == len(expected_values), (hdu, name, where)
+        for i, (a, b) in enumerate(zip(got_values, expected_values, strict=True)):
+            if isinstance(b, np.ndarray) and b.dtype.kind in "iu":
+                np.testing.assert_array_equal(
+                    np.asarray(a).astype(object),
+                    b.astype(object),
+                    err_msg=f"hdu {hdu} col {name} row {i}",
+                )
+            elif isinstance(b, (list, tuple, np.ndarray)):
+                np.testing.assert_allclose(
+                    np.asarray(a, dtype=np.float64),
+                    np.asarray(b, dtype=np.float64),
+                    rtol=1e-6,
+                    atol=1e-6,
+                    equal_nan=True,
+                    err_msg=f"hdu {hdu} col {name} row {i}",
+                )
+            elif isinstance(b, str):
+                assert (a or "").rstrip() == b.rstrip(), (hdu, name, i, a, b)
+            elif b is None or (isinstance(b, float) and math.isnan(b)):
+                assert a is None or (isinstance(a, float) and math.isnan(a)), (
+                    hdu,
+                    name,
+                    i,
+                    a,
+                    b,
+                )
+            else:
+                assert a == b, (hdu, name, i, a, b)
+        return
+
+    if expected.dtype.kind in "SU":
+        assert got.dtype.kind in "SUO", (hdu, name, got.dtype)
+        got_s = np.asarray([str(v).rstrip() for v in got], dtype=object)
+        exp_s = np.asarray([str(v).rstrip() for v in expected], dtype=object)
+        np.testing.assert_array_equal(got_s, exp_s, err_msg=f"hdu {hdu} col {name}")
+        return
+
+    if expected.dtype.kind in "iu" and got.dtype.kind in "iu":
+        assert got.shape == expected.shape, (hdu, name, got.shape, expected.shape)
+        np.testing.assert_array_equal(
+            got.astype(object),
+            np.asarray(expected).astype(object),
+            err_msg=f"hdu {hdu} col {name} ({where})",
+        )
+        return
+
+    got_f = np.asarray(got, dtype=np.float64)
+    exp_f = np.asarray(expected, dtype=np.float64)
+    assert got_f.shape == exp_f.shape, (hdu, name, got_f.shape, exp_f.shape)
+    np.testing.assert_allclose(
+        got_f,
+        exp_f,
+        rtol=1e-6,
+        atol=1e-6,
+        equal_nan=True,
+        err_msg=f"hdu {hdu} col {name} ({where})",
+    )
+
+
+@pytest.mark.parametrize("source", SOURCES, ids=[s["id"] for s in SOURCES])
+def test_table_values_match_astropy(source: dict[str, Any]) -> None:
+    path = corpus.require(source)
+    if isinstance(path, list):
+        pytest.skip("multi-file source")
+    with fits.open(path, memmap=True) as hdul:
+        for index, hdu in enumerate(hdul):
+            if not isinstance(hdu, (fits.BinTableHDU, fits.TableHDU)):
+                continue
+            data = hdu.data
+            nrows = len(data)
+            assert torchfits.read_nrows(str(path), index) == nrows
+            assert torchfits.read_colnames(str(path), index) == list(data.columns.names)
+
+            windows = [(0, min(ROWS, nrows))]
+            if nrows > ROWS:
+                windows.append((max(0, nrows - ROWS), nrows))
+            for start, stop in windows:
+                arrow = tf_table.read(str(path), hdu=index, row_slice=(start, stop))
+                assert arrow.num_rows == stop - start
+                for name in data.columns.names:
+                    expected = _normalize_expected_column(data[name][start:stop])
+                    column = arrow[name]
+                    if (
+                        pa.types.is_integer(column.type)
+                        and getattr(expected, "dtype", None) is not None
+                        and expected.dtype.kind in "iu"
+                        and np.ndim(expected) == 1
+                    ):
+                        _assert_integer_column(
+                            name, column, expected, hdu=index, where=f"{start}:{stop}"
+                        )
+                        continue
+                    got = column.to_numpy(zero_copy_only=False)
+                    _assert_column(
+                        name, got, expected, hdu=index, where=f"{start}:{stop}"
+                    )
+
+
+@pytest.mark.parametrize("source", SOURCES, ids=[s["id"] for s in SOURCES])
+def test_numeric_columns_agree_with_fitsio(source: dict[str, Any]) -> None:
+    """fitsio is a second, independent CFITSIO binding; compare plain columns."""
+    path = corpus.require(source)
+    if isinstance(path, list):
+        pytest.skip("multi-file source")
+    if str(path).endswith(".gz"):
+        pytest.skip("fitsio does not open gzip containers")
+    fitsio = pytest.importorskip("fitsio")
+    compared = 0
+    with fits.open(path, memmap=True) as hdul:
+        for index, hdu in enumerate(hdul):
+            if not isinstance(hdu, fits.BinTableHDU):
+                continue
+            data = hdu.data
+            nrows = len(data)
+            if nrows == 0:
+                continue
+            stop = min(500, nrows)
+            # fitsio's ``ext`` is the 0-based HDU index and ``rows`` lists row
+            # indices, so the first ``stop`` rows are ``arange(stop)``.
+            table = fitsio.read(str(path), ext=index, rows=np.arange(stop))
+            assert len(table) == stop, (index, len(table), stop)
+            torch_cols = tf_table.read_torch(str(path), hdu=index, start_row=1, num_rows=stop)
+            for name in data.columns.names:
+                if name not in torch_cols or name not in table.dtype.names:
+                    continue
+                expected = np.asarray(table[name])
+                if expected.dtype.kind not in "iuf":
+                    continue
+                got = torch_cols[name].numpy()
+                assert got.shape == expected.shape, (index, name, got.shape)
+                compared += 1
+                if expected.dtype.kind in "iu" and got.dtype.kind in "iu":
+                    np.testing.assert_array_equal(
+                        got.astype(object),
+                        expected.astype(object),
+                        err_msg=f"hdu {index} col {name}",
+                    )
+                    continue
+                np.testing.assert_allclose(
+                    np.asarray(got, dtype=np.float64),
+                    np.asarray(expected, dtype=np.float64),
+                    rtol=1e-6,
+                    atol=1e-6,
+                    equal_nan=True,
+                    err_msg=f"hdu {index} col {name}",
+                )
+    if compared == 0:
+        pytest.skip("no numeric binary-table column to compare")

@@ -4,15 +4,20 @@ import time
 import os
 
 import torchfits
-import torchfits._io_engine.write_api as write_api
 
 
-def test_opened_hdul_repr_handles_string_header_numbers(tmp_path):
+def test_opened_hdul_repr_reports_shape_and_dtype(tmp_path):
+    """``repr`` reads the summary from parsed header values, which 1.3.0 keeps
+    typed (NAXIS is an int; see ``HDUList.fromfile``). It must not depend on
+    the raw FITS string form and must not choke on either."""
     path = tmp_path / "repr.fits"
     torchfits.write(str(path), torch.ones((2, 3), dtype=torch.float32))
 
     with torchfits.open(str(path)) as hdul:
-        assert isinstance(hdul[0].header["NAXIS"], str)
+        assert hdul[0].header["NAXIS"] == 2
+        # The raw card is still a string, so the summary has to cope with a
+        # string-typed numeric card as well (r4b: repr used to format it raw).
+        hdul[0].header["NAXIS"] = "2"
         summary = repr(hdul)
 
     assert "(2, 3)" in summary
@@ -268,8 +273,7 @@ def test_replace_hdu_compressed_image_only(tmp_path):
     assert torch.equal(torchfits.read(str(path), hdu=1), replacement)
 
 
-def test_insert_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
-    path = tmp_path / "insert_compressed_mixed.fits"
+def _image_and_table(path):
     image = torch.arange(16, dtype=torch.int16).reshape(4, 4)
     table = {"ID": torch.tensor([1, 2, 3], dtype=torch.int32)}
     torchfits.write(
@@ -277,6 +281,16 @@ def test_insert_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
         torchfits.HDUList([torchfits.TensorHDU(image), torchfits.TableHDU(table)]),
         overwrite=True,
     )
+    return image
+
+
+# HDU edits never renumber the untouched HDUs and compress= applies to the new
+# HDU only (torchfits docs/api-core-io.md, "HDU Mutation").
+
+
+def test_insert_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
+    path = tmp_path / "insert_compressed_mixed.fits"
+    image = _image_and_table(path)
 
     inserted = torch.full((4, 4), 11, dtype=torch.int16)
     torchfits.insert_hdu(
@@ -288,11 +302,12 @@ def test_insert_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
     )
 
     with torchfits.open(str(path)) as hdul:
-        assert len(hdul) == 4
-        assert hdul[2].header.get("EXTNAME") == "SCI_INSERT"
-    assert torch.equal(torchfits.read(str(path), hdu=2), inserted)
-    table_out = torchfits.read(str(path), hdu=3)
-    assert table_out["ID"].tolist() == [1, 2, 3]
+        assert len(hdul) == 3
+        assert hdul[1].header.get("EXTNAME") == "SCI_INSERT"
+    assert torchfits.read_header(str(path), 1).get("ZIMAGE") is True
+    assert torch.equal(torchfits.read(str(path), hdu=0), image)
+    assert torch.equal(torchfits.read(str(path), hdu=1), inserted)
+    assert torchfits.read(str(path), hdu=2)["ID"].tolist() == [1, 2, 3]
 
 
 def test_delete_hdu_compressed_image_only(tmp_path):
@@ -305,39 +320,40 @@ def test_delete_hdu_compressed_image_only(tmp_path):
         overwrite=True,
         compress=True,
     )
+    before = path.read_bytes()
 
-    torchfits.delete_hdu(str(path), 1, compress=True)
+    # A delete writes no HDU, so compress= is refused rather than ignored.
+    with pytest.raises(ValueError, match="compress"):
+        torchfits.delete_hdu(str(path), 1, compress=True)
+    assert path.read_bytes() == before
+
+    torchfits.delete_hdu(str(path), 1)
     with torchfits.open(str(path)) as hdul:
         assert len(hdul) == 2
     assert torch.equal(torchfits.read(str(path), hdu=1), img1)
+    assert torchfits.read_header(str(path), 1).get("ZIMAGE") is True
 
 
 def test_delete_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
     path = tmp_path / "delete_compressed_mixed.fits"
-    image = torch.arange(16, dtype=torch.int16).reshape(4, 4)
-    table = {"ID": torch.tensor([1, 2], dtype=torch.int32)}
-    torchfits.write(
-        str(path),
-        torchfits.HDUList([torchfits.TensorHDU(image), torchfits.TableHDU(table)]),
-        overwrite=True,
-    )
+    _image_and_table(path)
+    before = path.read_bytes()
 
-    torchfits.delete_hdu(str(path), 0, compress=True)
+    with pytest.raises(ValueError, match="compress"):
+        torchfits.delete_hdu(str(path), 0, compress=True)
+    # Without compress= it is still refused: the table cannot become primary.
+    with pytest.raises(ValueError, match="cannot become the primary"):
+        torchfits.delete_hdu(str(path), 0)
+    assert path.read_bytes() == before
+
+    torchfits.delete_hdu(str(path), 1)
     with torchfits.open(str(path)) as hdul:
-        assert len(hdul) == 2
-    table_out = torchfits.read(str(path), hdu=1)
-    assert table_out["ID"].tolist() == [1, 2]
+        assert len(hdul) == 1
 
 
 def test_replace_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
     path = tmp_path / "replace_compressed_mixed.fits"
-    image = torch.arange(16, dtype=torch.int16).reshape(4, 4)
-    table = {"ID": torch.tensor([1, 2], dtype=torch.int32)}
-    torchfits.write(
-        str(path),
-        torchfits.HDUList([torchfits.TensorHDU(image), torchfits.TableHDU(table)]),
-        overwrite=True,
-    )
+    image = _image_and_table(path)
 
     replacement = {"ID": torch.tensor([10, 20, 30], dtype=torch.int32)}
     torchfits.replace_hdu(
@@ -349,28 +365,30 @@ def test_replace_hdu_compressed_mixed_hdus_roundtrip(tmp_path):
     )
 
     with torchfits.open(str(path)) as hdul:
-        assert len(hdul) == 3
-        assert hdul[2].header.get("EXTNAME") == "CAT_REPLACED"
-    table_out = torchfits.read(str(path), hdu=2)
-    assert table_out["ID"].tolist() == [10, 20, 30]
+        assert len(hdul) == 2
+        assert hdul[1].header.get("EXTNAME") == "CAT_REPLACED"
+    assert torch.equal(torchfits.read(str(path), hdu=0), image)
+    assert torchfits.read(str(path), hdu=1)["ID"].tolist() == [10, 20, 30]
 
 
-def test_failed_hdu_mutation_preserves_original(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda p: torchfits.insert_hdu(p, {"ID": torch.arange(3)}, index=0),
+        lambda p: torchfits.replace_hdu(p, 0, {"ID": torch.arange(3)}),
+        lambda p: torchfits.insert_hdu(p, torch.ones(3, 3), index=0, compress=True),
+    ],
+    ids=["insert-table-primary", "replace-primary-with-table", "compress-primary"],
+)
+def test_failed_hdu_mutation_preserves_original(tmp_path, edit):
+    """An edit that cannot land raises ValueError and leaves the file as it was."""
     path = tmp_path / "mutation_preserved.fits"
     original = torch.arange(9, dtype=torch.float32).reshape(3, 3)
     torchfits.write(str(path), original)
     before = path.read_bytes()
 
-    def partial_then_fail(temp_path, _hdus, compress=False):
-        with open(temp_path, "wb") as stream:
-            stream.write(b"partial")
-        raise RuntimeError("mutation failed")
-
-    monkeypatch.setattr(
-        write_api, "_write_hdus_with_optional_compression", partial_then_fail
-    )
-    with pytest.raises(RuntimeError, match="mutation failed"):
-        torchfits.insert_hdu(str(path), torch.ones((3, 3)), index=1)
+    with pytest.raises(ValueError):
+        edit(str(path))
 
     assert path.read_bytes() == before
     assert torch.equal(torchfits.read(str(path)), original)

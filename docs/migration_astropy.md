@@ -2,7 +2,7 @@
 
 Side-by-side comparison and migration recipes for common astronomical FITS I/O tasks between `astropy.io.fits` and `torchfits`.
 
-For a complete breakdown of supported FITS standard features, see the [Feature Parity Matrix](parity.md). For end-to-end Python examples, see [Python Workflows](python-workflows.md) and [Examples](examples.md).
+For a complete breakdown of supported FITS standard features, see the [Feature Parity Matrix](parity.md). For end-to-end Python examples, see torchfits' [Python Workflows](https://github.com/astroai/torchfits/blob/main/docs/python-workflows.md) and [Examples](https://github.com/astroai/torchfits/blob/main/docs/examples.md); for supported versions and removed options, its [Compatibility](https://github.com/astroai/torchfits/blob/main/docs/compatibility.md) page.
 
 ---
 
@@ -12,7 +12,7 @@ For a complete breakdown of supported FITS standard features, see the [Feature P
 |---|---|---|
 | **Read image array** | `astropy.io.fits.getdata(path)` | `torchfits.read(path)` |
 | **Read as PyTorch Tensor** | `torch.from_numpy(astropy.io.fits.getdata(path))` | `torchfits.read_tensor(path, hdu=0)` |
-| **Read with memory-mapping** | `astropy.io.fits.getdata(path, use_mmap=True)` | `torchfits.read_tensor(path, hdu=0, mmap=True)` |
+| **Read with memory-mapping** | `astropy.io.fits.getdata(path, memmap=True)` | `torchfits.read_tensor(path, hdu=0, mmap=True)` |
 | **Direct GPU placement** | `torch.from_numpy(astropy.io.fits.getdata(path)).cuda()` | `torchfits.read_tensor(path, hdu=0, device="cuda")` |
 | **Read image & header** | `hdul = astropy.io.fits.open(path); data = hdul[0].data; hdr = hdul[0].header` | `data, header = torchfits.read(path, hdu=0, return_header=True)` |
 | **Windowed cutout read** | `astropy.io.fits.open(path, memmap=True)[0].section[y1:y2, x1:x2]` | `torchfits.read_subset(path, hdu=0, x1=x1, y1=y1, x2=x2, y2=y2)` |
@@ -67,8 +67,8 @@ For a complete breakdown of supported FITS standard features, see the [Feature P
 ## Key Behavioral Differences
 
 ### 1. Data Scaling & Precision
-- **Astropy:** Applies `BSCALE`/`BZERO` scaling on the CPU when data is loaded, often promoting integer arrays to 64-bit float (`float64`).
-- **torchfits:** Fuses scaling directly into vectorized SIMD loops, outputting standard 32-bit float (`float32`) tensors ideal for PyTorch models and GPU memory efficiency. Use `raw_scale=True` to preserve raw storage integers without conversion.
+- **Both:** A scaled image (`BSCALE`/`BZERO`) reads as `float32` for `BITPIX` 8 and 16 and as `float64` for `BITPIX` 32 and 64, so the values agree. The unsigned and signed-byte conventions (`BZERO` of `2**15`, `2**31`, `2**63` or `-128`) are not scaling: both return exact `uint16`/`uint32`/`uint64`/`int8` values.
+- **torchfits:** Applies the scaling in the native reader (or on the GPU with `device=`). Use `raw_scale=True` to get the stored integers without conversion.
 
 ### 2. Tabular Data Representation
 - **Astropy:** Returns custom `astropy.table.Table` or NumPy record arrays (`numpy.recarray`).

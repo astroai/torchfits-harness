@@ -515,7 +515,7 @@ class TestMakeLoader:
     def test_returns_dataloader(self, temp_image_dir):
         _tmpdir, files = temp_image_dir
         ds = FitsImageDataset(files)
-        loader = make_loader(ds, batch_size=4, optimize_cache=False)
+        loader = make_loader(ds, batch_size=4)
         assert isinstance(loader, DataLoader)
         for images, labels in loader:
             assert images.shape[0] <= 4
@@ -524,7 +524,7 @@ class TestMakeLoader:
     def test_default_shuffle_for_map_dataset(self, temp_image_dir):
         _tmpdir, files = temp_image_dir
         ds = FitsImageDataset(files)
-        loader = make_loader(ds, batch_size=8, shuffle=None, optimize_cache=False)
+        loader = make_loader(ds, batch_size=8, shuffle=None)
         assert loader.batch_size == 8
         for images, _ in loader:
             assert images.shape[0] == 8
@@ -533,7 +533,7 @@ class TestMakeLoader:
     def test_explicit_shuffle_false(self, temp_image_dir):
         _tmpdir, files = temp_image_dir
         ds = FitsImageDataset(files)
-        loader = make_loader(ds, batch_size=8, shuffle=False, optimize_cache=False)
+        loader = make_loader(ds, batch_size=8, shuffle=False)
         for images, _ in loader:
             assert images.shape[0] == 8
             break
@@ -547,60 +547,38 @@ class TestMakeLoader:
             return images * 2.0
 
         loader = make_loader(
-            ds, batch_size=4, collate_fn=my_collate, optimize_cache=False
+            ds, batch_size=4, collate_fn=my_collate
         )
         batch = next(iter(loader))
         # Custom collate returns a tensor (not the default tuple)
         assert isinstance(batch, torch.Tensor)
 
-    def test_optimize_cache_no_files_attribute(self, temp_table_file):
-        """A dataset with no ``files`` makes the cache warm-up a no-op.
-
-        R2-051: this asserted only ``isinstance(loader, DataLoader)``, so
-        ``make_loader`` could warm the cache for a dataset that exposes nothing
-        to warm and the test still passed -- measured, that change took
-        ``optimize_for_dataset`` from 0 calls to 1.
-        """
-        from unittest import mock as _mock
-
-        ds = FitsTableDataset(temp_table_file)
-        assert not getattr(ds, "files", None), (
-            "this guard is measured against a dataset with no `files`; if the "
-            "attribute appears the assertion below stops meaning anything"
-        )
-        with _mock.patch("torchfits.cache.optimize_for_dataset") as tune:
-            loader = make_loader(ds, batch_size=4)
-        assert isinstance(loader, DataLoader)
-        tune.assert_not_called()
-
     def test_remote_files_download_once(self, tmp_path, monkeypatch):
-        """Prefetch and resolve share one fetch per remote URL (no double GET)."""
+        """A remote URL listed twice is fetched once and served from the cache.
+
+        Since torchfits 1.3.1 ``make_loader`` is a plain DataLoader factory; the
+        remote prefetch belongs to the dataset, so that is what is exercised.
+        """
         from unittest import mock
 
-        from torch.utils.data import Dataset as _MapDataset
+        import torchfits
 
         monkeypatch.setenv("TORCHFITS_REMOTE_CACHE", str(tmp_path / "remote_cache"))
+        source = tmp_path / "served.fits"
+        torchfits.write_tensor(str(source), torch.ones(3, 3), overwrite=True)
+        body = source.read_bytes()
         url = "https://archive.example.org/tiles/map-tile.fits"
         calls: list[str] = []
 
         def _mock_download(u, dest):
             calls.append(u)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(b"staged")
+            dest.write_bytes(body)  # real FITS bytes: torchfits refuses others
             return dest
 
-        class _StubDataset(_MapDataset):
-            files = [url]
-
-            def __len__(self):
-                return 2
-
-            def __getitem__(self, idx):
-                return torch.zeros(3), torch.tensor(0)
-
         with mock.patch("torchfits.data.remote._download", side_effect=_mock_download):
-            loader = make_loader(_StubDataset(), batch_size=1, shuffle=False)
-            batches = list(loader)
+            ds = FitsImageDataset([url, url])
+            batches = list(make_loader(ds, batch_size=1, shuffle=False))
         assert len(batches) == 2
         assert calls == [url]
 
@@ -614,9 +592,9 @@ class TestMakeLoader:
         _tmpdir, files = temp_image_dir
         ds = FitsImageDataset(files)
 
-        dropped = make_loader(ds, batch_size=6, drop_last=True, optimize_cache=False)
-        kept = make_loader(ds, batch_size=6, drop_last=False, optimize_cache=False)
-        default = make_loader(ds, batch_size=6, optimize_cache=False)
+        dropped = make_loader(ds, batch_size=6, drop_last=True)
+        kept = make_loader(ds, batch_size=6, drop_last=False)
+        default = make_loader(ds, batch_size=6)
 
         assert len(list(dropped)) == 1
 
@@ -631,7 +609,7 @@ class TestMakeLoader:
     def test_iterable_dataset_no_shuffle_by_default(self, temp_image_dir):
         _tmpdir, files = temp_image_dir
         ds = FitsImageIterableDataset(files)
-        loader = make_loader(ds, batch_size=4, optimize_cache=False)
+        loader = make_loader(ds, batch_size=4)
         assert isinstance(loader, DataLoader)
 
 
@@ -717,7 +695,6 @@ class TestMultiWorkerDataLoader:
             ds = FitsImageDataset(files)
             loader = make_loader(
                 ds, batch_size=2, num_workers=2, shuffle=False,
-                optimize_cache=False,
             )
             seen_count = 0
             for batch in loader:
@@ -736,7 +713,7 @@ class TestMultiWorkerDataLoader:
             from torchfits.data import FitsImageIterableDataset, make_loader
             ds = FitsImageIterableDataset({files!r}, shuffle=False)
             loader = make_loader(
-                ds, batch_size=2, num_workers=2, optimize_cache=False
+                ds, batch_size=2, num_workers=2
             )
             seen = 0
             for batch in loader:
@@ -754,7 +731,7 @@ class TestMultiWorkerDataLoader:
             from torchfits.data import FitsImageIterableDataset, make_loader
             ds = FitsImageIterableDataset({files!r}, shuffle=True, seed=1)
             loader = make_loader(
-                ds, batch_size=2, num_workers=2, optimize_cache=False
+                ds, batch_size=2, num_workers=2
             )
             seen = 0
             for batch in loader:
@@ -771,7 +748,7 @@ class TestMultiWorkerDataLoader:
             from torchfits.data import FitsTableIterableDataset, make_loader
             ds = FitsTableIterableDataset({temp_table_file!r}, batch_size=2)
             loader = make_loader(
-                ds, batch_size=4, num_workers=2, optimize_cache=False
+                ds, batch_size=4, num_workers=2
             )
             seen = 0
             for batch in loader:
@@ -789,7 +766,7 @@ class TestMultiWorkerDataLoader:
             from torchfits.data import FitsImageIterableDataset, make_loader
             ds = FitsImageIterableDataset({files!r}, shuffle=False)
             loader = make_loader(
-                ds, batch_size=2, num_workers=0, optimize_cache=False
+                ds, batch_size=2, num_workers=0
             )
             seen = 0
             for batch in loader:

@@ -98,60 +98,33 @@ def test_stream_table_accepts_cfitsio_extended_local_path(tmp_path):
     header_fn.assert_not_called()
 
 
-def test_default_table_column_rejects_bad_tnull():
-    from torchfits._table.mutation import _default_table_column_values
+@pytest.mark.xfail(
+    strict=True,
+    raises=RuntimeError,
+    reason="torchfits 1.3.1+: a non-numeric tnull reaches the native schema check "
+    "and raises RuntimeError without naming TNULL (reported upstream)",
+)
+def test_insert_column_rejects_bad_tnull(tmp_path):
+    """A malformed ``tnull`` is caller input: ValueError naming TNULL."""
+    import numpy as np
+    import torch
 
-    with pytest.raises(ValueError, match="TNULL"):
-        _default_table_column_values("QUAL", "I", 3, tnull="not-an-int")
+    import torchfits
 
-
-def test_for_environment_memoised_and_mock_safe():
-    from torchfits.cache import CacheConfig
-
-    CacheConfig._ENV_CACHE.clear()
-    with mock.patch.object(CacheConfig, "_is_hpc_environment", return_value=True):
-        with mock.patch.object(CacheConfig, "_is_gpu_environment", return_value=False):
-            a = CacheConfig.for_environment()
-            b = CacheConfig.for_environment()
-            assert a is b  # identical env signature -> cached object reused
-            assert a.max_files == 1000  # HPC config
-
-    # Changing a detector changes the signature -> fresh, correct result.
-    with mock.patch.object(CacheConfig, "_is_hpc_environment", return_value=False):
-        with mock.patch.object(
-            CacheConfig, "_is_cloud_environment", return_value=False
-        ):
-            with mock.patch.object(
-                CacheConfig, "_is_gpu_environment", return_value=False
-            ):
-                c = CacheConfig.for_environment()
-                assert c.max_files == 100  # default/local config
-
-
-def test_cache_manager_owns_private_config_copy():
-    from torchfits.cache import CacheConfig, CacheManager
-
-    CacheConfig._ENV_CACHE.clear()
-    shared = CacheConfig.for_environment()
-    mgr = CacheManager()
-    mgr.config.max_files = 123456
-    # Mutating the manager's config must not corrupt the shared cached one.
-    assert shared.max_files != 123456
-    assert CacheConfig.for_environment().max_files != 123456
-
-
-def test_probe_returns_empty_on_missing_file():
-    from torchfits._table import read as read_mod
-
-    # read_header on a missing path raises OSError, which the probe catches.
-    assert read_mod._unsigned_column_dtypes("/does/not/exist.fits", 1, None) == {}
-    assert read_mod._column_tforms_for_decode("/does/not/exist.fits", 1, None) == {}
-    assert (
-        read_mod._can_use_full_read_path(
-            "/does/not/exist.fits", 1, None, reject_scaled=False
+    path = str(tmp_path / "t.fits")
+    torchfits.write(path, {"A": torch.arange(3, dtype=torch.int16)}, overwrite=True)
+    with pytest.raises(ValueError, match="(?i)tnull"):
+        torchfits.table.insert_column(
+            path, "QUAL", np.zeros(3, dtype=np.int16), format="I", tnull="not-an-int"
         )
-        is False
-    )
+
+
+@pytest.mark.parametrize("reader", ["read", "read_torch"])
+def test_table_read_of_a_missing_file_names_the_path(reader):
+    import torchfits.table as tf_table
+
+    with pytest.raises((OSError, RuntimeError), match="/does/not/exist.fits"):
+        getattr(tf_table, reader)("/does/not/exist.fits", hdu=1)
 
 
 def _write_scaled_table(tmp_path):

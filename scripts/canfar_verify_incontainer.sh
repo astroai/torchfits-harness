@@ -13,8 +13,8 @@
 # Env:
 #   TORCHFITS_HARNESS_RUN_ID   run id (default: verify_<UTC timestamp>)
 #   TORCHFITS_WHEEL            pip spec or path for the subject
-#   TORCHFITS_VERSION          exact release to install (wins over the default
-#                              floor; use this from `canfar --env`, which
+#   TORCHFITS_VERSION          exact release to install (wins over the default,
+#                              the latest release; use this from `canfar --env`, which
 #                              drops values containing `>` or `==`)
 
 #   TORCHFITS_HARNESS_PYTEST_ARGS  extra pytest args (default: -q -m "not performance")
@@ -44,30 +44,7 @@ cd "$REPO_ROOT"
 # The image ships some pixi, but pixi.toml pins one. Fetch the pinned release
 # into scratch instead of self-updating: the image's pixi lives in a read-only
 # prefix, and `requires-pixi` otherwise refuses to run at all.
-use_pinned_pixi() {
-  local want have arch dir
-  want="$(sed -n 's/^requires-pixi *= *"==\([^"]*\)".*/\1/p' pixi.toml | head -1)"
-  if [[ -z "${want}" ]]; then
-    return 0
-  fi
-  have="$(pixi --version 2>/dev/null | awk '{print $2}')"
-  if [[ "${have}" == "${want}" ]]; then
-    return 0
-  fi
-  case "$(uname -m)" in
-    x86_64) arch=x86_64 ;;
-    aarch64 | arm64) arch=aarch64 ;;
-    *) echo "FAIL: unsupported arch $(uname -m) for the pixi download" >&2; return 1 ;;
-  esac
-  dir="${SCRATCH}/pixi-${want}"
-  mkdir -p "$dir"
-  echo "pixi ${have:-missing} != pinned ${want}; fetching v${want} into ${dir}"
-  curl -fsSL --retry 3 -o "${dir}/pixi" \
-    "https://github.com/prefix-dev/pixi/releases/download/v${want}/pixi-${arch}-unknown-linux-musl"
-  chmod +x "${dir}/pixi"
-  export PATH="${dir}:${PATH}"
-  pixi --version
-}
+. "${REPO_ROOT}/scripts/canfar_pinned_pixi.sh"
 
 # No process substitution: the platform already captures stdout, and a `tee`
 # child is killed as the session tears down, which swallowed the last lines of
@@ -86,10 +63,9 @@ use_pinned_pixi
 pixi install
 pixi run dev
 
-# From here on, drive the environment's interpreter directly. Every `pixi run`
-# re-syncs the environment from pixi.lock, and the lock carries its own
-# torchfits: invoking pixi again after installing the subject silently put the
-# locked wheel back, so a job that pinned 1.2.2 verified 1.2.1.
+# From here on, drive the environment's interpreter directly. pixi.lock no
+# longer carries torchfits (it once did, and a `pixi run` after the subject
+# install put the locked wheel back), so the subject below is the only one.
 ENV_PY="$(pixi run python -c 'import sys; print(sys.executable)' | tail -1)"
 echo "env python: ${ENV_PY}"
 
@@ -101,7 +77,8 @@ if [[ -n "${TORCHFITS_WHEEL:-}" ]]; then
 elif [[ -n "${TORCHFITS_VERSION:-}" ]]; then
   WHEEL_SPEC="torchfits==${TORCHFITS_VERSION}"
 else
-  WHEEL_SPEC="torchfits>=1.3.0"
+  # Unpinned: the latest release is the default subject.
+  WHEEL_SPEC="torchfits"
 fi
 echo "subject spec: ${WHEEL_SPEC}"
 "$ENV_PY" -m pip install --no-cache-dir --no-deps "${WHEEL_SPEC}"

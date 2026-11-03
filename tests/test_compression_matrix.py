@@ -179,12 +179,12 @@ def test_standard_algo_lossless_matrix_exact(tmp_path, algo, dtype):
 
 @pytest.mark.parametrize(
     "dtype,positive",
-    [("uint8", True), ("int16", True), ("int32", True)],
+    [("uint8", True), ("int16", True), ("uint16", False), ("int32", True)],
 )
 def test_plio_positive_integer_lossless(tmp_path, dtype, positive):
     """PLIO_1 on its valid integer inputs is lossless and astropy-readable.
-    uint16 is intentionally absent: it is pseudo-unsigned (BZERO=32768), so
-    the stored pixels are negative and PLIO_1 rejects it."""
+    uint16 covers its full range: torchfits compresses its unsigned values
+    (changelog: "io: Compress uint16 images with PLIO_1")."""
     data = _make(dtype, (64, 64), positive=positive)
     path = str(tmp_path / f"plio_{dtype}.fits")
     torchfits.write(path, data, overwrite=True, compress="PLIO_1")
@@ -195,14 +195,20 @@ def test_plio_positive_integer_lossless(tmp_path, dtype, positive):
     header = torchfits.read_header(path, hdu=1)
     assert header["ZCMPTYPE"] == "PLIO_1"
 
-    _assert_astropy_matches(path, data)
+    if dtype == "uint16":
+        # CFITSIO stores BZERO=32768 PLIO tiles as the unsigned values, without
+        # the offset; astropy's own decoder applies it and reads every pixel
+        # 32768 off. fitsio (CFITSIO) is the oracle for this case.
+        fitsio = pytest.importorskip("fitsio")
+        np.testing.assert_array_equal(fitsio.read(path, ext=1), data.numpy())
+    else:
+        _assert_astropy_matches(path, data)
 
 
 @pytest.mark.parametrize(
     "dtype,positive",
     [
         ("int16", False),  # negatives are not representable
-        ("uint16", False),  # pseudo-unsigned: stored pixels are negative
         ("int32", False),  # values above 2**24 are not representable
     ],
 )

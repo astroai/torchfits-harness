@@ -54,7 +54,7 @@ from torchfits.transforms import (
     mask_from_nan,
     zscale_limits,
 )
-from torchfits.transforms.helpers import _dilate_or, _weighted_quantile
+from torchfits.transforms.helpers import _weighted_quantile
 
 
 def _image(seed: int = 0, shape: tuple[int, ...] = (2, 32, 32)) -> torch.Tensor:
@@ -675,14 +675,6 @@ class TestIrafZScale:
         default = zscale_limits(x)
         proxy = zscale_limits(x, algorithm="proxy")
         assert torch.equal(default[0], proxy[0])
-
-    def test_dilate_or_matches_numpy_convolve(self) -> None:
-        rng = np.random.default_rng(0)
-        for n, width in [(7, 2), (7, 3), (10, 1), (12, 4), (20, 10)]:
-            base = rng.random(n) > 0.6
-            reference = np.convolve(base, np.ones(width, dtype=bool), mode="same")
-            got = _dilate_or(torch.from_numpy(base), width).numpy()
-            assert (reference == got).all(), (n, width)
 
 
 # ---------------------------------------------------------------------------

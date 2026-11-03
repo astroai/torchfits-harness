@@ -101,24 +101,25 @@ def test_hierarch_cards_parse_to_typed_long_keys(tmp_path):
     assert hdr["ESO DET CHIP1 ID"] == "RED"
 
 
-# uint64 writes are rejected
+# uint64 writes use the BZERO/TZERO = 2**63 convention (torchfits 1.3.1+)
 
 
-def test_uint64_image_write_rejected(tmp_path):
-    t = torch.zeros(2, 2, dtype=torch.uint64)
-    with pytest.raises(ValueError, match="uint64"):
-        torchfits.write(tmp_path / "u64img.fits", t)
+def test_uint64_image_write_roundtrips(tmp_path):
+    t = torch.tensor([[0, 1], [2**63, 2**64 - 1]], dtype=torch.uint64)
+    path = tmp_path / "u64img.fits"
+    torchfits.write(path, t)
+    out = torchfits.read(str(path))
+    assert out.dtype == torch.uint64
+    assert torch.equal(out, t)
 
 
-def test_uint64_table_column_write_rejected(tmp_path):
-    with pytest.raises(ValueError, match="uint64"):
-        torchfits.write(
-            tmp_path / "u64col.fits",
-            {"col": torch.zeros(3, dtype=torch.uint64)},
-        )
-
-
-# TSCAL/TZERO scaling + mmap fallback
+def test_uint64_table_column_write_roundtrips(tmp_path):
+    col = torch.tensor([0, 2**63, 2**64 - 1], dtype=torch.uint64)
+    path = tmp_path / "u64col.fits"
+    torchfits.write(path, {"col": col})
+    out = torchfits.read(str(path), hdu=1)["col"]
+    assert out.dtype == torch.uint64
+    assert torch.equal(out, col)
 
 
 def _write_scaled_table(tmp_path, storage_dtype, storage_values):

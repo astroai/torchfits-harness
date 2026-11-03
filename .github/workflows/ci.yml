@@ -16,12 +16,16 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
-      - name: Install torchfits subject and comparators
+      - name: Install comparators
         run: |
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install "torchfits>=1.3.0" "numpy>=1.26" "astropy>=6.1" "fitsio>=1.4" "pytest>=9" "pyarrow>=25,<26" "pandas>=2.2" "psutil>=5"
+          pip install "numpy>=1.26" "astropy>=6.1" "fitsio>=1.4" "pytest>=9" "pyarrow>=25,<26" "pandas>=2.2" "psutil>=5"
           pip install -e . --no-deps
+      - name: Install the torchfits subject (latest PyPI release)
+        # The subject is explicit and unpinned: the harness does not depend on
+        # torchfits. Point this at a wheel to test anything else.
+        run: pip install --upgrade torchfits
       - name: Import subject
         run: python -c "import torchfits, torchfits_harness; print(torchfits_harness.subject())"
       - name: Install fitsverify (conda-forge)
@@ -32,6 +36,13 @@ jobs:
             -c conda-forge
             fitsverify
       - name: Upstream parity smokes
-        run: pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q
+        # A login shell activates the micromamba env, so fitsverify is on PATH;
+        # without it test_verify_vs_fitsverify skips silently.
+        shell: bash -el {0}
+        run: |
+          command -v fitsverify
+          pytest tests/test_fitsio_upstream_smoke.py tests/test_astropy_upstream_smoke.py tests/test_layout.py tests/test_verify_vs_fitsverify.py -q
       - name: Benchmark smoke
         run: python benchmarks/bench_cpp_backend.py
+      - name: Contract gates (CLI, public surface, corpus benchmark, docs tour)
+        run: pytest tests/test_bench_corpus.py tests/test_cli_suite.py tests/test_public_surface.py tests/test_tour.py -q

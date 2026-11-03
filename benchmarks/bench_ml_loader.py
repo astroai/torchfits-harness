@@ -73,14 +73,12 @@ class TorchFitsDataset(Dataset):
         hdu: int | str | None = "auto",
         mmap: bool | str = "auto",
         cache_capacity: int = 0,
-        handle_cache_capacity: int = 64,
         scale_on_device: bool = True,
     ):
         self.filepaths = filepaths
         self.hdu = hdu
         self.mmap = mmap
         self.cache_capacity = cache_capacity
-        self.handle_cache_capacity = handle_cache_capacity
         self.scale_on_device = scale_on_device
 
     def __len__(self) -> int:
@@ -92,7 +90,6 @@ class TorchFitsDataset(Dataset):
             hdu=self.hdu,
             mmap=self.mmap,
             cache_capacity=self.cache_capacity,
-            handle_cache_capacity=self.handle_cache_capacity,
             scale_on_device=self.scale_on_device,
         )
 
@@ -152,18 +149,25 @@ def bench_loader(
 
     import torch as _torch
 
-    start_time = time.time()
+    def _sync() -> None:
+        # Async H2D copies must land before the clock stops (M16), on CUDA and
+        # on MPS alike.
+        if device.startswith("cuda") and _torch.cuda.is_available():
+            _torch.cuda.synchronize()
+        elif device.startswith("mps") and _torch.backends.mps.is_available():
+            _torch.mps.synchronize()
+
+    _sync()
+    start_time = time.perf_counter()
     total_pixels = 0
     for _ in range(n_epochs):
         for batch in loader:
             if device != "cpu":
                 batch = batch.to(device, non_blocking=True)
             total_pixels += batch.numel()
-    # Async H2D copies must land before the clock stops (M16).
-    if device != "cpu" and device.startswith("cuda") and _torch.cuda.is_available():
-        _torch.cuda.synchronize()
+    _sync()
 
-    total_time = time.time() - start_time
+    total_time = time.perf_counter() - start_time
     pixels_sec = total_pixels / total_time
     mb_sec = (total_pixels * 4) / (1024 * 1024) / total_time  # float32-equivalent
     print(f"{description:<28}: {pixels_sec:>12.0f} pixels/s ({mb_sec:>7.1f} MB/s)")
@@ -353,7 +357,6 @@ def run_benchmark() -> None:
                     hdu="auto",
                     mmap="auto",
                     cache_capacity=0,
-                    handle_cache_capacity=64,
                     scale_on_device=True,
                 ),
                 "fitsio + numpy": lambda: FitsioDataset(filepaths, ext=None),
@@ -394,7 +397,6 @@ def run_benchmark() -> None:
                     hdu=1,
                     mmap="auto",
                     cache_capacity=0,
-                    handle_cache_capacity=64,
                     scale_on_device=True,
                 ),
                 "fitsio (comp)": lambda: FitsioDataset(filepaths_comp, ext=1),

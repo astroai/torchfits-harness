@@ -1,7 +1,8 @@
 # Benchmarks
 
 > Run these from a torchfits-harness checkout. Install a torchfits wheel
-> (`pixi run subject <wheel>`), then `pixi run dev`. The comparison
+> (`pixi run subject <wheel>`, or `pixi run subject-local` for a sibling
+> `../torchfits` checkout); pixi does not lock or restore torchfits. The comparison
 > environment is the default Pixi env: `pixi run bench-fits`,
 > `pixi run bench-all`, `pixi run bench-cpp`. Commands below that say
 > `pixi run -e bench-all` or `pixi run -e bench-gpu` are the historical
@@ -381,6 +382,7 @@ mmap-on and mmap-off peers are never cross-compared.
 | `bench_gpu_memory.py` | fits (diagnostic) | GPU memory/leak checks (non-gating) |
 | `bench_denoise.py` | ml (scientific) | Noise2Noise CR-cleaning on real CFHT MegaCam frames (the example and write-up live in [torchfits](https://github.com/astroai/torchfits/blob/main/docs/denoise-pipeline.md)) |
 | `bench_import_boundary.py` | cold start | Fresh-process spawn-to-exit cost per entry point, split by whether torch was loaded; `--strict` gates on the boundary and per-entry-point budgets |
+| `bench_corpus.py` | corpus | Real archive files (`pixi run bench-corpus`): header, whole-image, central-window and row-window reads by torchfits, astropy and fitsio on the same HDU |
 
 ## Coverage matrix
 
@@ -435,9 +437,9 @@ dtype-equivalent for every scaled integer FITS file.
 For apples-to-apples integer GPU timing, the suite also records
 `torchfits_dtype_fair_device` (`read_tensor(..., raw_scale=True)`).
 
-**Training loops:** call
-`torchfits.cache.optimize_for_dataset(paths, avg_file_size_mb=…)` before
-`DataLoader` epochs so handle caches stay warm.
+**Training loops:** `torchfits.data.make_loader` is a plain `DataLoader`
+factory; remote files are fetched once by the dataset into
+`TORCHFITS_REMOTE_CACHE` (or `cache_dir=`), so later epochs read local copies.
 
 ### Refreshing GPU numbers (CANFAR staging)
 

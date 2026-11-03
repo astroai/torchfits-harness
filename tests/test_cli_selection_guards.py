@@ -278,7 +278,9 @@ def test_compressed_cube_geometry_uses_the_z_axis_count():
     header = torchfits.read_header(str(path), 1)
     assert int(header["ZNAXIS"]) == 3
     assert int(header["NAXIS"]) == 2
-    assert compressed_image_geometry(header) == ((5, 4, 3), "float32")
+    # Row-major like an uncompressed image's shape (torchfits changelog:
+    # "cli: Report compressed image shapes row-major like uncompressed ones").
+    assert compressed_image_geometry(header) == ((3, 4, 5), "float32")
 
 
 # --------------------------------------------------------------------------

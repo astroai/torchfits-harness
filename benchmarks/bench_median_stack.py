@@ -206,8 +206,8 @@ def _read_median_dataloader(
     """Median via torchfits FitsImageDataset + torch DataLoader.
 
     One batch of ``len(paths)`` planes per hdu, median over dim 0.
-    ``make_loader(shuffle=False, optimize_cache=False)``: deterministic file
-    order and no cache pre-warm, so this measures the plain DataLoader path
+    ``make_loader(shuffle=False)``: deterministic file order, so this
+    measures the plain DataLoader path
     (dataset machinery, collate, iteration) on equal footing with the direct
     reads.
 
@@ -223,7 +223,6 @@ def _read_median_dataloader(
         batch_size=len(paths),
         shuffle=False,
         num_workers=num_workers,
-        optimize_cache=False,
     )
     batch, _labels = next(iter(loader))
     return _median_axis0(batch)

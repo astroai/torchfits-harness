@@ -5,7 +5,12 @@ import csv
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+
+# Reads only this repository; runs without a torchfits subject.
+pytestmark = pytest.mark.independent
 
 def test_benchmark_run_ids_match_published_assets() -> None:
     """Every run ID the benchmarks page cites must have published CSVs.

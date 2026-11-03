@@ -223,11 +223,13 @@ def test_payload_read_cache_does_not_serve_a_deleted_file(tmp_path):
 
 
 def test_extended_syntax_path_keeps_its_caches(tmp_path):
-    """`mef.fits[1]` is never stat-able; it must stay cached, not be disabled.
+    """`mef.fits[1]` must stay cached, and be validated against the file.
 
     Reading a missing signature as "fresh" was the R2-014 defect, but flipping
     that the other way would silently turn off every cached metadata probe for
-    filtered paths. Both signatures being None is what keeps them live.
+    filtered paths. torchfits now stamps such entries with the underlying
+    file's signature ("io: Validate cached reads of file.fits[N] and file://
+    paths against the file"), so they stay live until that file changes.
     """
     mef = str(tmp_path / "mef.fits")
     fits.HDUList(
@@ -253,7 +255,7 @@ def test_extended_syntax_path_keeps_its_caches(tmp_path):
             assert keys, f"{name} cached nothing for the extended-syntax path"
             for key in keys:
                 stored_sig, value = cache[key]
-                assert stored_sig is None, (name, stored_sig)
+                assert stored_sig is not None, (name, "no file signature")
                 assert caches.signature_cached_get(cache, key) == value, (
                     f"{name} dropped its entry: the cache is dead for "
                     "extended-syntax paths"
@@ -262,6 +264,15 @@ def test_extended_syntax_path_keeps_its_caches(tmp_path):
     assert dict(torchfits.read_header(filtered, 0)) == dict(first_hdr)
     assert hdu_api.autodetect_hdu(filtered) == first_auto
     assert image_meta.get_image_meta(filtered, 0) == first_meta
+
+    # Rewriting the file must invalidate what the filtered path cached.
+    fits.HDUList(
+        [
+            fits.PrimaryHDU(),
+            fits.ImageHDU(np.zeros((3, 5), dtype=np.float32), name="SCI"),
+        ]
+    ).writeto(mef, overwrite=True)
+    assert torchfits.read_header(filtered, 0)["NAXIS2"] == 3
 
 
 # Caches whose entries are (path_signature, value) pairs. hdu_type_cache goes

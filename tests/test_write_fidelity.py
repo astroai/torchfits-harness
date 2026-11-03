@@ -120,21 +120,21 @@ def test_unsigned_image_convention_roundtrip_exact(tmp_path, torch_dtype, mmap):
 
 
 def test_uint64_image_bzero_2_63_is_detected(tmp_path):
-    """LONGLONG BZERO=2**63 images must be detected as scaled (not read as raw
-    int64 garbage); they come back as float32 per the documented contract."""
+    """LONGLONG BZERO=2**63 images are the uint64 convention: they must read
+    back as exact ``uint64`` (torchfits 1.3.1+, like astropy and fitsio), not
+    as raw int64 garbage or a rounded float."""
     from astropy.io import fits
 
-    data = np.array([0, 1, 2**20, 2**40, 2**63 - 1], dtype=np.uint64).reshape(1, 5)
+    data = np.array([0, 1, 2**20, 2**40, 2**63 - 1, 2**64 - 1], dtype=np.uint64)
+    data = data.reshape(1, 6)
     path = str(tmp_path / "u64.fits")
     fits.HDUList([fits.PrimaryHDU(data)]).writeto(path, overwrite=True)
 
     out = torchfits.read(path)
-    # Scaled LONGLONG accumulates in float64. 2**40 is exact there and was
-    # not in float32; 2**63-1 is the nearest float64, not the integer.
-    assert out.dtype == torch.float64
-    np.testing.assert_array_equal(out.numpy(), data.astype(np.float64))
+    assert out.dtype == torch.uint64
+    np.testing.assert_array_equal(out.numpy(), data)
     with torchfits.open(path) as hdul:
-        assert hdul[0].data.dtype == torch.float64
+        assert hdul[0].data.dtype == torch.uint64
 
 
 # ---------------------------------------------------------------------------
@@ -266,14 +266,14 @@ TABLE_COLUMNS = {
 
 
 def _assert_column_faithful(got: torch.Tensor, want: np.ndarray) -> None:
-    """Exact value comparison; int8 is stored as TBYTE and returns as uint8."""
+    """Exact value and dtype comparison.
+
+    int8 is stored with the signed-byte convention (TFORM ``B``, TZERO -128)
+    and reads back as int8 since torchfits 1.3.1.
+    """
     want_t = torch.as_tensor(want)
-    if want.dtype == np.int8:
-        assert got.dtype == torch.uint8
-        assert torch.equal(got.view(torch.int8), want_t)
-    else:
-        assert got.dtype == want_t.dtype
-        assert torch.equal(got, want_t)
+    assert got.dtype == want_t.dtype
+    assert torch.equal(got, want_t)
 
 
 def test_table_write_roundtrip_dtype_matrix(tmp_path):
@@ -294,10 +294,10 @@ def test_table_write_roundtrip_dtype_matrix(tmp_path):
     with fits.open(path) as hdul:
         for name, want in TABLE_COLUMNS.items():
             actual = np.asarray(hdul[1].data[name])
-            if want.dtype == np.int8:
-                # int8 is stored as TBYTE; astropy sees the raw unsigned bytes.
-                assert actual.dtype == np.uint8
-                actual = actual.view(np.int8)
+            # astropy decodes a TZERO = -128 byte column as scaled float64;
+            # every other dtype keeps its integer/bool kind.
+            if want.dtype != np.int8:
+                assert actual.dtype.newbyteorder("=") == want.dtype, name
             np.testing.assert_array_equal(actual, want, err_msg=f"astropy col {name}")
 
 
@@ -505,26 +505,20 @@ def _write_bit_table(path: str) -> None:
     fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(path, overwrite=True)
 
 
-def test_filtered_gather_bit_and_logical_decode_matches_mask(tmp_path):
-    """Gathered BIT/LOGICAL columns from the filtered path equal the full-read
+@pytest.mark.parametrize("mmap", [True, False])
+def test_filtered_gather_bit_and_logical_decode_matches_mask(tmp_path, mmap):
+    """Gathered BIT/LOGICAL columns from a where= read equal the full-read
     columns masked by the numeric predicate (MSB-first bit unpacking)."""
-    import torchfits._C as cpp
-    from torchfits._table.read import _compile_where_to_simple_predicates
-
     path = str(tmp_path / "bit_gather.fits")
     _write_bit_table(path)
     full = torchfits.read(path, hdu=1, mmap=False)
     keep = full["NUM"] > 3
-    want_bits = full["BITS"][keep]
-    want_flag = full["FLAG"][keep]
 
-    predicates = _compile_where_to_simple_predicates("NUM > 3")
-    assert predicates is not None
-    got = cpp.read_fits_table_filtered(
-        path, 1, ["BITS", "FLAG", "NUM"], list(predicates)
+    got = torchfits.table.read_torch(
+        path, hdu=1, columns=["BITS", "FLAG", "NUM"], where="NUM > 3", mmap=mmap
     )
-    assert torch.equal(got["BITS"], want_bits)
-    assert torch.equal(got["FLAG"], want_flag)
+    assert torch.equal(got["BITS"], full["BITS"][keep])
+    assert torch.equal(got["FLAG"], full["FLAG"][keep])
     assert torch.equal(got["NUM"], full["NUM"][keep])
 
 
@@ -765,8 +759,8 @@ def test_chunked_read_large_uint16_exact(tmp_path):
 
 
 def test_table_write_int8_column_tbyte_convention(tmp_path):
-    """int8 columns store as raw TBYTE on every write form (the signed view
-    recovers the values; astropy sees the raw unsigned bytes)."""
+    """int8 columns use the signed-byte convention (TFORM B, TZERO -128) on
+    every write form, so astropy and torchfits both read int8 values."""
     want = np.array([-128, -1, 0, 1, 127], dtype=np.int8)
     from astropy.io import fits
 
@@ -781,8 +775,10 @@ def test_table_write_int8_column_tbyte_convention(tmp_path):
         writer(path)
         with fits.open(path) as hdul:
             actual = np.asarray(hdul[1].data["I8"])
-        assert actual.dtype == np.uint8, label
-        np.testing.assert_array_equal(actual.view(np.int8), want, err_msg=label)
+            assert hdul[1].header["TFORM1"] == "B", label
+            assert hdul[1].header["TZERO1"] == -128, label
+        # astropy applies TZERO = -128 to a table column as a float scaling.
+        np.testing.assert_array_equal(actual, want.astype(np.float64), err_msg=label)
         _assert_column_faithful(torchfits.read(path, hdu=1)["I8"], want)
 
 
@@ -852,7 +848,7 @@ def test_dict_image_extra_keys_rejected_not_silently_dropped(tmp_path):
     payload = {"data": torch.zeros(2, 2), "flux": torch.ones(2)}
     for label, kwargs in (("plain", {}), ("compressed", {"compress": True})):
         path = tmp_path / f"extra_{label}.fits"
-        with pytest.raises(RuntimeError, match="flux"):
+        with pytest.raises(ValueError, match="flux"):
             torchfits.write(str(path), payload, overwrite=True, **kwargs)
         assert not path.exists(), label
 
@@ -1052,77 +1048,6 @@ def test_quantized_dict_table_compressed_matches_plain(tmp_path):
     assert bool(torch.isnan(got_plain["FLUX"][7]))
     finite = ~torch.isnan(got_plain["FLUX"])
     assert torch.equal(got_plain["FLUX"][finite], got_comp["FLUX"][finite])
-
-
-def test_atomic_overwrite_recipe_has_exactly_one_implementation():
-    """The temp-file + ``os.replace`` recipe must be written out once, not thrice.
-
-    It was written out three times -- ``write_api.atomic_write_target`` plus two
-    inline copies in ``_hdu_rewrite`` -- and that is how R2-013 happened: the
-    ``_table/write.py`` schema branch turned out to be a *fourth* whole-file
-    writer with no copy of the protection to inherit. Copies had already drifted
-    (one guarded the temp dance on ``os.path.isfile`` and recursed, one assumed
-    the file existed), so a fix applied to one was not applied to the others. All
-    three now route through ``_write_helpers._atomic_replace_target``, and this
-    keeps a fourth from being written from scratch.
-
-    Parsed with ``ast`` rather than grepped: docstrings and comments discuss
-    ``os.replace`` constantly, and prose must be unable to satisfy or trip this.
-    """
-    import ast
-    from pathlib import Path
-
-    package = Path(torchfits.__file__).parent
-    recipe_calls = {"os.replace", "tempfile.mkstemp"}
-    sites: list[tuple[str, int]] = []
-    for source in sorted(package.rglob("*.py")):
-        tree = ast.parse(source.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if (
-                isinstance(func, ast.Attribute)
-                and isinstance(func.value, ast.Name)
-                and f"{func.value.id}.{func.attr}" in recipe_calls
-            ):
-                sites.append((source.relative_to(package).as_posix(), node.lineno))
-
-    assert [rel for rel, _ in sites] == ["_io_engine/_write_helpers.py"] * len(sites), (
-        "the atomic-write recipe is implemented outside "
-        f"_write_helpers._atomic_replace_target: {sites}"
-    )
-    assert len(sites) == len(recipe_calls), (
-        f"expected exactly {len(recipe_calls)} recipe calls (one per primitive), got {sites}"
-    )
-
-    # The rename happens when the ``with`` block *exits*, so cache invalidation
-    # and checksum restamping inside the block would run against the file that
-    # is about to be replaced -- a concurrent reader could cache the old bytes
-    # under the path and go on serving them after the rename. No dynamic test can
-    # observe that window, so it is pinned structurally here.
-    source = (package / "_io_engine" / "_hdu_rewrite.py").read_text(encoding="utf-8")
-    checked = 0
-    too_early = {"_invalidate_written_target", "_write_all_checksums"}
-    for node in ast.walk(ast.parse(source)):
-        items = getattr(node, "items", None)
-        if not isinstance(node, (ast.With, ast.AsyncWith)) or items is None:
-            continue
-        entered = ast.unparse(items[0].context_expr)
-        if entered != "_atomic_replace_target(path)":
-            continue
-        checked += 1
-        for inner in ast.walk(node):
-            if isinstance(inner, ast.Call) and ast.unparse(inner.func) in too_early:
-                pytest.fail(
-                    f"{entered} block calls {ast.unparse(inner.func)} on line "
-                    f"{inner.lineno}: it must run after the block, once the "
-                    "rename has made the new bytes current"
-                )
-
-    # And the guard has to be reachable at all: if _hdu_rewrite ever renames the
-    # helper, this check silently stops watching anything.
-    assert checked >= 2, f"only {checked} _atomic_replace_target blocks found"
 
 
 def _atomic_overwrite_route(route: str, path: str) -> None:
